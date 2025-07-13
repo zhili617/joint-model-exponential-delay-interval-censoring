@@ -1,0 +1,26 @@
+{
+    "id": "71DA013B",
+    "path": "E:/UBC/Final Project/orin/HHJMs-master/R/estDisp.r",
+    "project_path": "R/estDisp.r",
+    "type": "r_source",
+    "hash": "448491909",
+    "contents": "",
+    "dirty": false,
+    "created": 1751546449473.0,
+    "source_on_save": false,
+    "relative_order": 11,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "65,3",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1752222881,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1752222881517,
+    "read_only": false,
+    "read_only_alternatives": []
+}

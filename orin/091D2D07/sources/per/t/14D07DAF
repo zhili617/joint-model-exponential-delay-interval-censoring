@@ -1,0 +1,27 @@
+{
+    "id": "14D07DAF",
+    "path": "E:/UBC/Final Project/orin/HHJMs-master/R/weibull_interval_censored_like.R",
+    "project_path": "R/weibull_interval_censored_like.R",
+    "type": "r_source",
+    "hash": "1239059803",
+    "contents": "",
+    "dirty": false,
+    "created": 1752269027663.0,
+    "source_on_save": false,
+    "relative_order": 10,
+    "properties": {
+        "tempName": "Untitled1",
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "79,0",
+        "scrollLine": "0"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1751062465,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1751062465,
+    "read_only": false,
+    "read_only_alternatives": []
+}
