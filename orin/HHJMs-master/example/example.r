@@ -7,13 +7,13 @@ library(tictoc)
 library(survival)
 library(MASS)
 ## source all the R code
-srcpath = "E:/UBC/Final Project/orin/HHJMs-master/R"
+srcpath = "E:/UBC/Final Project/New folder/Final-Project/orin/HHJMs-master/R"
 setwd(srcpath)
 (file.sources = list.files(pattern="*.r$"))
 sapply(file.sources,source,.GlobalEnv)
 
 ## read data
-setwd("E:/UBC/Final Project/orin/HHJMs-master/example/")
+setwd("E:/UBC/Final Project/New folder/Final-Project/orin/HHJMs-master/example/")
 long.data <- read.csv("Longdata.csv")
 surv.data <- read.csv("Survdata.csv")
 
@@ -122,11 +122,11 @@ survObject2 <- list(
 ######################################################
 ### case 1: with a Cox PH model ###
 tic()
-testjm1 <- try(JMfit(glmeObject, survObject1, 
+testjm3 <- try(JMfit(glmeObject, survObject1, 
                     long.data, surv.data,
                     idVar="sid", eventTime="obs_time",
                     survFit=fitCOX1,
-                    method = "h-likelihood"), silent=T)
+                    method = "h-likelihood", Silent = F), silent=T)
 # re-estimate SDs of parameter estimates by using the adaptive GH method
 new_sd1 = JMsd_aGH(testjm1, ghsize=4, srcpath=srcpath, paralle=T)
 ptm <- toc()
