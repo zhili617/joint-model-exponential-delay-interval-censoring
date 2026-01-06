@@ -1,6 +1,7 @@
 library(tidyverse)
 library(nlme)
 library(DescTools)
+library(survival)
 
 # dataset <- read_csv("E:/UBC/Final Project/vax004dataAb.txt")
 dataset <- read_csv("E:/UBC/Final Project/vax004dataAb.txt")
@@ -40,7 +41,7 @@ mk_cols <- paste0("k", 1:7)
 for (k in 1:7) {
   lag_col <- paste0("lag_", mk_cols[k])
   ind_col <- paste0("ind_", mk_cols[k])
-  dataset_new[[lag_col]] <- with(dataset_new, pmax(dosedays + (mdays[pmax(m,1)] - mdays[k]), 0))
+  dataset_new[[lag_col]] <- with(dataset_new, pmax((mdays[pmax(m,1)] - mdays[k]), 0))
   dataset_new[[ind_col]] <- with(dataset_new, ifelse(!is.na(m) & m >= k, 1L, 0L))
 }
 
@@ -89,7 +90,7 @@ fit_nlme <- nlme(
   model = nl_formula,
   data  = groupedData(NAb ~ sampledays | sid, data = dataset_new),
   fixed = A1 + A2 + A3 + A4 + A5 + A6 + A7 + lambda ~ 1,
-  random =  list(sid = pdDiag(A1 + A2 + A3 + A4 + A5 + A6 + A7 + lambda~ 1)),
+  random =  lambda ~ 1 | sid,
   start = as.numeric(coef(fit_nls)),
   control = nlmeControl(
     maxIter=200, pnlsMaxIter=300, msMaxIter=200,
@@ -98,62 +99,22 @@ fit_nlme <- nlme(
 
 summary(fit_nlme)
 
-# equation 2
-nls_formula <- NAb ~ 
-  A1*ind_k1*(-expm1(-beta*lag_k1))*exp(-lambda1*lag_k1) +
-  A2*ind_k2*(-expm1(-beta*lag_k2))*exp(-lambda2*lag_k2) +
-  A3*ind_k3*(-expm1(-beta*lag_k3))*exp(-lambda3*lag_k3) +
-  A4*ind_k4*(-expm1(-beta*lag_k4))*exp(-lambda4*lag_k4) +
-  A5*ind_k5*(-expm1(-beta*lag_k5))*exp(-lambda5*lag_k5) +
-  A6*ind_k6*(-expm1(-beta*lag_k6))*exp(-lambda6*lag_k6) +
-  A7*ind_k7*(-expm1(-beta*lag_k7))*exp(-lambda7*lag_k7)
-
-start_nls <- list(
-  A1=.5,A2=.6,A3=.6,A4=.6,A5=.5,A6=.5,A7=.5,
-  lambda=.30,  
-  beta=.80
-)
-
-fit_nls <- nls(
-  nls_formula, data=dataset_new, start=start_nls, algorithm="port",
-  lower=c(A1=0,A2=0,A3=0,A4=0,A5=0,A6=0,A7=0, lambda=0.05, beta=0.05),
-  upper=c(A1=Inf,A2=Inf,A3=Inf,A4=Inf,A5=Inf,A6=Inf,A7=Inf, lambda=2,    beta=2),
-  control=nls.control(maxiter=500, tol=1e-4, minFactor=1/2048)
-)
-
-
-nlme_formula <- nls_formula
-
-
-
-
-fit_nlme <- nlme(
-  model = nlme_formula,
-  data  = groupedData(NAb ~ sampledays | sid, data = dataset_new),
-  fixed = A1 + A2 + A3 + A4 + A5 + A6 + A7 + beta + lambda ~ 1,
-  random = list(sid = pdDiag(A1 + A2 + A3 + A4 + A5 + A6 + A7 + beta + lambda ~ 1)),  
-  start  = as.numeric(coef(fit_nls)),
-  control = nlmeControl(
-    pnlsMaxIter = 100, msMaxIter = 500, maxIter = 300,
-    pnlsTol     = 1e-4,  
-    tolerance   = 1e-5,  
-    msVerbose   = TRUE, returnObject = TRUE
-  )
-)
 
 
 
 
 
 
-
-
-
-# model 2 
+# Power Law
 
 for (k in 1:7) {
-  L <- paste0("lag_k", k)
-  dataset_new[[L]] <- pmax(dataset_new[[L]], 0) + eps
+  lag_col <- paste0("lag_k", k)
+  ind_col <- paste0("ind_k", k)
+  
+  raw_lag <- dataset_new$sampledays - mdays[k]   
+  
+  dataset_new[[ind_col]] <- as.integer(raw_lag > 0)       
+  dataset_new[[lag_col]] <- ifelse(raw_lag > 0, raw_lag, 1)  
 }
 
 # Sum_{k=1..7} C_k * I_{k<=m} * (lag_k)^(-m)
@@ -175,7 +136,7 @@ fit_nlme_pl <- nlme(
   random = m ~ 1 | sid,
   start  = start_vals_pl,
   control = nlmeControl(
-    maxIter     = 200, pnlsMaxIter = 30, msMaxIter = 200,
+    maxIter     = 200, pnlsMaxIter = 300, msMaxIter = 200,
     tolerance   = 1e-6, pnlsTol    = 1e-6, msTol   = 1e-6,
     returnObject = TRUE
   )
@@ -268,75 +229,24 @@ ggplot(dataset_new, aes(x = sampledays, y = NAb, group = sid)) +
   ) +
   theme_minimal()
 
-#----------------------value compare (md1 & method 1)------------------------------------------
 
-df <- dataset_new %>%
-  mutate(
-    pred_nlme = tryCatch(predict(fit_nlme, dataset_new, level = 1), error = function(e) NA),
-    pred_nls  = tryCatch(predict(fit_nls,  dataset_new),             error = function(e) NA),
-    pred_md1 = tryCatch(predict(md1), error = function(e) NA)
-  )
+# random 5 cases
+set.seed(222)  
+sid_sample <- sample(unique(dataset_new$sid), 5)
 
+random_NAb_ori <- dataset_new %>%
+  dplyr::filter(sid %in% sid_sample)
 
-
-rmse_nlme  <- sqrt(mean((df$pred_nlme - df$NAb)^2, na.rm = TRUE))
-mae_nlme   <- mean(abs(df$pred_nlme - df$NAb),      na.rm = TRUE)
-smape_nlme <- mean(2*abs(df$pred_nlme - df$NAb) / (abs(df$pred_nlme) + abs(df$NAb) + 1e-8), na.rm = TRUE) * 100
-bias_nlme  <- mean(df$pred_nlme - df$NAb, na.rm = TRUE)
-r2_nlme    <- cor(df$pred_nlme, df$NAb, use = "complete.obs")^2
-ccc_nlme   <- CCC(df$pred_nlme, df$NAb)$rho.c[1]  
-
-
-rmse_nls  <- sqrt(mean((df$pred_nls - df$NAb)^2, na.rm = TRUE))
-mae_nls   <- mean(abs(df$pred_nls - df$NAb),      na.rm = TRUE)
-smape_nls <- mean(2*abs(df$pred_nls - df$NAb) / (abs(df$pred_nls) + abs(df$NAb) + 1e-8), na.rm = TRUE) * 100
-bias_nls  <- mean(df$pred_nls - df$NAb, na.rm = TRUE)
-r2_nls    <- cor(df$pred_nls, df$NAb, use = "complete.obs")^2
-ccc_nls   <- CCC(df$pred_nls, df$NAb)$rho.c[1]  
-
-
-rmse_md1  <- sqrt(mean((df$pred_md1 - df$NAb)^2, na.rm = TRUE))
-mae_md1   <- mean(abs(df$pred_md1 - df$NAb),      na.rm = TRUE)
-smape_md1 <- mean(2*abs(df$pred_md1 - df$NAb) / (abs(df$pred_md1) + abs(df$NAb) + 1e-8), na.rm = TRUE) * 100
-bias_md1  <- mean(df$pred_md1 - df$NAb, na.rm = TRUE)
-r2_md1    <- cor(df$pred_md1, df$NAb, use = "complete.obs")^2
-ccc_md1   <- CCC(df$pred_md1, df$NAb)$rho.c[1]  
-
-
-
-
-cal_int  <- c(
-  coef(lm(NAb ~ pred_nlme, data = df))[1],
-  coef(lm(NAb ~ pred_nls,  data = df))[1],
-  coef(lm(NAb ~ pred_md1,      data = df))[1]
-)
-cal_slope <- c(
-  coef(lm(NAb ~ pred_nlme, data = df))[2],
-  coef(lm(NAb ~ pred_nls,  data = df))[2],
-  coef(lm(NAb ~ pred_md1,      data = df))[2]
-)
-
-results <- tibble(
-  model      = c("nlme", "nls", "md1"),
-  RMSE       = c(rmse_nlme,  rmse_nls,  rmse_md1),
-  MAE        = c(mae_nlme,   mae_nls,   mae_md1),
-  SMAPE_pct  = c(smape_nlme, smape_nls, smape_md1),
-  Bias       = c(bias_nlme,  bias_nls,  bias_md1),
-  R2         = c(r2_nlme,    r2_nls,    r2_md1),
-  CCC        = as.numeric(c(ccc_nlme,   ccc_nls,   ccc_md1)),
-  Cal_intercept = cal_int,
-  Cal_slope     = cal_slope
-) %>%
-  mutate(across(-model, ~ round(., 4))) %>%
-  arrange(RMSE)
-
-results
-
-
-
-
-
-
+ggplot(random_NAb_ori, aes(x = sampledays, y = NAb, color = sid, group = sid)) +
+  geom_line(alpha = 0.8, linewidth = 1) +
+  geom_point(alpha = 0.7, size = 2) +
+  labs(
+    title = "Randomly Selected 5 NAb Trajectories",
+    x = "Days",
+    y = "NAb value"
+  ) +
+  theme_minimal() +
+  theme(legend.title = element_blank())
 
 #----------------goodness of fit(compare fitted value v.s. model curve)
 
@@ -363,7 +273,7 @@ f_model1 <- function(t, A, lambda, plan_months=c(0,1,6,12,18,24,30)) {
   return(val)
 }
 
-par(mfrow=c(1,3))  # put 3 graph into same line
+par(mfrow=c(3,1))  # put 3 graph into same line
 for (sid_i in sids_sample) {
   
   dat_i <- dataset_new %>% filter(sid == sid_i)
@@ -395,37 +305,40 @@ for (sid_i in sids_sample) {
 # Model 3
 #-----------------------------------------------
 # define power-law function
-f_model2 <- function(t, C1,C2,C3,C4,C5,C6,C7,m, plan_months=c(0,1,6,12,18,24,30)) {
+f_model2 <- function(t, C1, C2, C3, C4, C5, C6, C7, m,
+                     plan_months = c(0,1,6,12,18,24,30)) {
+
   mdays <- plan_months * 30.44
-  
-  lag1 <- pmax(t - mdays[1], 1e-8)
-  lag2 <- pmax(t - mdays[2], 1e-8)
-  lag3 <- pmax(t - mdays[3], 1e-8)
-  lag4 <- pmax(t - mdays[4], 1e-8)
-  lag5 <- pmax(t - mdays[5], 1e-8)
-  lag6 <- pmax(t - mdays[6], 1e-8)
-  lag7 <- pmax(t - mdays[7], 1e-8)
-  
-  val <- C1*(t>=mdays[1])*(lag1^(-m)) +
-    C2*(t>=mdays[2])*(lag2^(-m)) +
-    C3*(t>=mdays[3])*(lag3^(-m)) +
-    C4*(t>=mdays[4])*(lag4^(-m)) +
-    C5*(t>=mdays[5])*(lag5^(-m)) +
-    C6*(t>=mdays[6])*(lag6^(-m)) +
-    C7*(t>=mdays[7])*(lag7^(-m))
-  
-  return(val)
+
+  # pure lag (no repair)
+  lag1 <- t - mdays[1]
+  lag2 <- t - mdays[2]
+  lag3 <- t - mdays[3]
+  lag4 <- t - mdays[4]
+  lag5 <- t - mdays[5]
+  lag6 <- t - mdays[6]
+  lag7 <- t - mdays[7]
+
+  # effect only when lag > 0
+  term1 <- ifelse(lag1 > 0, C1 * lag1^(-m), 0)
+  term2 <- ifelse(lag2 > 0, C2 * lag2^(-m), 0)
+  term3 <- ifelse(lag3 > 0, C3 * lag3^(-m), 0)
+  term4 <- ifelse(lag4 > 0, C4 * lag4^(-m), 0)
+  term5 <- ifelse(lag5 > 0, C5 * lag5^(-m), 0)
+  term6 <- ifelse(lag6 > 0, C6 * lag6^(-m), 0)
+  term7 <- ifelse(lag7 > 0, C7 * lag7^(-m), 0)
+
+  return(term1 + term2 + term3 + term4 + term5 + term6 + term7)
 }
 
 
 
 
-set.seed(10)
-sids_sample <- sample(unique(dataset_new$sid), 3)
+
 tgrid <- seq(min(dataset_new$sampledays),
              max(dataset_new$sampledays), length.out=200)
 
-par(mfrow=c(1,3))
+par(mfrow=c(3,1))
 for (sid_i in sids_sample) {
   
   dat_i <- dataset_new %>% filter(sid == sid_i)
@@ -457,3 +370,225 @@ for (sid_i in sids_sample) {
 }
 
 
+#------------------------ two step method -------------------
+
+# =========================
+# Improved two-step (bootstrap) for:
+#   Step 1: NLME -> get subject-specific random effects (lambda_i)
+#   Step 2: Cox  -> treat lambda_i as covariate
+#   Repeat B times (cluster bootstrap by subject) to get robust SE/CI
+# =========================
+
+library(nlme)
+library(survival)
+library(dplyr)
+library(tibble)
+
+# ---------- helper: build a bootstrap sample with unique boot_sid ----------
+
+
+make_boot_sample <- function(long_data, surv_data, idVar = "sid", seed = NULL) { 
+  if (!is.null(seed)) set.seed(seed) 
+  sids <- sort(unique(long_data[[idVar]])) 
+  n_sid <- length(sids) 
+  sid_star <- sample(sids, size = n_sid, replace = TRUE) # cut by sid
+  long_list <- split(long_data, long_data[[idVar]]) 
+  surv_list <- split(surv_data, surv_data[[idVar]]) 
+  long_b_list <- vector("list", n_sid) 
+  surv_b_list <- vector("list", n_sid) 
+  for (k in seq_len(n_sid)) { 
+    s <- as.character(sid_star[k]) 
+    boot_sid <- k 
+    tmp_long <- long_list[[s]] 
+    tmp_surv <- surv_list[[s]] 
+    tmp_long[[idVar]] <- boot_sid 
+    tmp_surv[[idVar]] <- boot_sid 
+    long_b_list[[k]] <- tmp_long 
+    surv_b_list[[k]] <- tmp_surv } 
+  long_b <- dplyr::bind_rows(long_b_list) 
+  surv_b <- dplyr::bind_rows(surv_b_list) 
+  list(long_b = long_b, surv_b = surv_b) }
+
+# ---------- helper: fit nlme safely ----------
+fit_nlme_safe <- function(long_b,
+                          nl_formula,
+                          start,
+                          idVar = "sid",
+                          control = nlmeControl(maxIter=200, pnlsMaxIter=300, msMaxIter=200,
+                                                tolerance=1e-5, pnlsTol=1e-5,
+                                                returnObject=TRUE)) {
+  # groupedData needs the same id variable name
+  gd <- groupedData(formula = as.formula(paste0("NAb ~ sampledays | ", idVar)), data = long_b)
+  
+  fit <- tryCatch(
+    nlme(
+      model = nl_formula,
+      data  = gd,
+      fixed = A1 + A2 + A3 + A4 + A5 + A6 + A7 + lambda ~ 1,
+      random = lambda ~ 1 | sid,
+      start = start,
+      control = control,
+      na.action = na.exclude
+    ),
+    error = function(e) e
+  )
+  fit
+}
+
+# ---------- helper: extract lambda_i and merge to survival ----------
+add_lambda_to_surv <- function(fit_nlme_b, surv_b, idVar = "sid",
+                               use = c("lambda_i","b_lambda"),
+                               standardize = TRUE) {
+  use <- match.arg(use)
+  
+  # ranef() gives BLUPs per subject
+  re <- ranef(fit_nlme_b) %>%
+    rownames_to_column(idVar) %>%
+    mutate(!!idVar := as.integer(.data[[idVar]]))
+  
+  # fixed effect lambda
+  lam_fix <- fixef(fit_nlme_b)["lambda"]
+  
+  re <- re %>%
+    rename(b_lambda = lambda) %>%
+    mutate(lambda_i = as.numeric(lam_fix + b_lambda))
+  
+  out <- surv_b %>% left_join(re %>% dplyr::select(all_of(idVar), b_lambda, lambda_i), by = idVar)
+  
+  if (use == "lambda_i") {
+    out$lambda_cov <- out$lambda_i
+  } else {
+    out$lambda_cov <- out$b_lambda
+  }
+  
+  if (standardize) {
+    out$lambda_cov <- as.numeric(scale(out$lambda_cov))
+  }
+  
+  out
+}
+
+# ---------- helper: fit Cox safely ----------
+fit_cox_safe <- function(surv_df,
+                         timeVar = "L",
+                         eventVar = "dropped_out_right",
+                         covars = c("GNE8_CD4","risk1","risk2","lambda_cov")) {
+  fml <- as.formula(
+    paste0("Surv(", timeVar, ", ", eventVar, ") ~ ", paste(covars, collapse = " + "))
+  )
+  fit <- tryCatch(coxph(fml, data = surv_df, x = TRUE), error = function(e) e)
+  fit
+}
+
+# ---------- MAIN: improved two-step via bootstrap ----------
+two_step_bootstrap <- function(long_data,
+                               surv_data_final,
+                               nl_formula,
+                               fit_nlme_ref,          # your original fit_nlme (for start/control)
+                               B = 300,
+                               seed = 1,
+                               idVar = "sid",
+                               timeVar = "L",
+                               eventVar = "dropped_out_right",
+                               lambda_use = c("lambda_i","b_lambda"),
+                               standardize_lambda = TRUE,
+                               verbose_every = 50) {
+  lambda_use <- match.arg(lambda_use)
+  set.seed(seed)
+  
+  # starting values: reuse reference fit
+  start <- fixef(fit_nlme_ref)  # includes A1..A7 and lambda
+  ctrl  <- fit_nlme_ref$control
+  
+  # storage
+  cox_names <- c("GNE8_CD4","risk1","risk2","lambda_cov")
+  beta_mat <- matrix(NA_real_, nrow = B, ncol = length(cox_names),
+                     dimnames = list(NULL, cox_names))
+  ok_nlme <- logical(B)
+  ok_cox  <- logical(B)
+  err_msg <- character(B)
+  
+  for (b in 1:B) {
+    if (!is.null(verbose_every) && b %% verbose_every == 0) {
+      message("Bootstrap ", b, "/", B)
+    }
+    
+    samp <- make_boot_sample(long_data, surv_data_final, idVar = idVar)
+    long_b <- samp$long_b
+    surv_b <- samp$surv_b
+    
+    # Step 1: NLME
+    fit_b <- fit_nlme_safe(long_b, nl_formula = nl_formula, start = start, idVar = idVar, control = ctrl)
+    if (inherits(fit_b, "error")) {
+      ok_nlme[b] <- FALSE
+      err_msg[b] <- paste0("NLME error: ", fit_b$message)
+      next
+    }
+    ok_nlme[b] <- TRUE
+    
+    # Build survival covariate (lambda)
+    surv_b2 <- add_lambda_to_surv(fit_b, surv_b, idVar = idVar,
+                                  use = lambda_use, standardize = standardize_lambda)
+    
+    # Step 2: Cox
+    cox_b <- fit_cox_safe(surv_b2, timeVar = timeVar, eventVar = eventVar, covars = cox_names)
+    if (inherits(cox_b, "error")) {
+      ok_cox[b] <- FALSE
+      err_msg[b] <- paste0("Cox error: ", cox_b$message)
+      next
+    }
+    ok_cox[b] <- TRUE
+    
+    # store betas
+    bb <- coef(cox_b)
+    # ensure all exist
+    beta_mat[b, names(bb)] <- as.numeric(bb)
+  }
+  
+  beta_df <- as.data.frame(beta_mat) %>%
+    mutate(iter = 1:B, ok_nlme = ok_nlme, ok_cox = ok_cox, err = err_msg) %>%
+    relocate(iter, ok_nlme, ok_cox, err)
+  
+  # summary on successful runs
+  keep <- which(ok_nlme & ok_cox)
+  beta_keep <- beta_mat[keep, , drop = FALSE]
+  
+  summ <- tibble(
+    term = colnames(beta_keep),
+    mean = apply(beta_keep, 2, mean, na.rm = TRUE),
+    se   = apply(beta_keep, 2, sd,   na.rm = TRUE),
+    q025 = apply(beta_keep, 2, quantile, probs = 0.025, na.rm = TRUE),
+    q975 = apply(beta_keep, 2, quantile, probs = 0.975, na.rm = TRUE)
+  ) %>%
+    mutate(
+      HR_mean = exp(mean),
+      HR_q025 = exp(q025),
+      HR_q975 = exp(q975),
+      n_success = length(keep),
+      B_total = B,
+      lambda_used = lambda_use,
+      lambda_standardized = standardize_lambda
+    )
+  
+  list(
+    beta_each = beta_df,
+    summary = summ
+  )
+}
+res <- two_step_bootstrap(
+  long_data = dataset_new,
+  surv_data_final = surv_data_final,
+  nl_formula = nl_formula,
+  fit_nlme_ref = fit_nlme,
+  B = 300,
+  seed = 1,
+  idVar = "sid",
+  timeVar = "L",
+  eventVar = "dropped_out_right",
+  lambda_use = "lambda_i",          # 或 "b_lambda"
+  standardize_lambda = TRUE,
+  verbose_every = 50
+)
+
+res$summary
+head(res$beta_each)
