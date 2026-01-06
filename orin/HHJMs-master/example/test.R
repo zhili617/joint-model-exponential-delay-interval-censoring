@@ -7,12 +7,13 @@ library(MASS)
 library(glmmTMB)
 library(Matrix)
 library(ggplot2)
-
+library(flexsurv)
 
 ## source all the R code
-srcpath = "E:/UBC/Final Project/orin/orin/HHJMs-master/R"
+srcpath = "E:/UBC/Final Project/New folder/Final-Project/orin/HHJMs-master/R"
 setwd(srcpath)
 (file.sources = list.files(pattern="\\.[rR]$"))
+
 sapply(file.sources,source,.GlobalEnv)
 
 --------------# decide interval censored as drop out---------------
@@ -121,7 +122,7 @@ get_deltas <- function(df) {
         data.frame(
           sid = temp$sid,
           start_doesnumber = length(vac_times),  # the 7th dose number
-          end_doesnumber = NA,                   # no more dose
+          end_doesnumber = 8,                   # no more dose
           sampledays = temp$sampledays,
           delta_ij = (temp$sampledays - (last_vac_time * 30))/30 
         )
@@ -192,6 +193,23 @@ long_data <- long_data %>%
 long_data <- long_data %>% # define Zij based on paper
   mutate(Zij = as.integer(MNGNE8 > 0.57))
 
+#----------------------
+# ---- save result ----
+#----------------------
+
+out_dir <- "E:/UBC/Final Project/New folder/Final-Project/orin/HHJMs-master/example"
+
+write_csv(
+  long_data,
+  file.path(out_dir, paste0("long_data", ".csv"))
+)
+
+write_csv(
+  surv_data_final,
+  file.path(out_dir, paste0("surv_data", ".csv"))
+)
+
+
 #------------  Set up models--------------------
 
 
@@ -222,6 +240,8 @@ summary(md3)
 Sdata <- surv_data_final
 Sdata$b11 <- scale(ranef(md1)$sid[,1], center=T, scale=T)
 Sdata$b21 <- scale(ranef(md3)$sid[,1], center=T, scale=T)
+
+
 
 
 
@@ -306,7 +326,7 @@ survObject2 <- list(
   distribution='weibull',
   str_val= summary(fitCOX2)$coeff[-1])
 
-
+set.seed(1)
 # ------------------ Cox model h-likelihood ----------------------
 tic()
 testjm1 <- try(JMfit(glmeObject, survObject1, 
@@ -322,6 +342,10 @@ ptm <- toc()
 JMsummary(testjm1)
 JMsummary(testjm1, newSD=new_sd1)
 
+# random effect
+testjm1$sigma
+
+testjm1$covBi
 #-----------------without drop out---------------------
 
 #censored right eta0-eta4
@@ -342,11 +366,11 @@ fixef(md_bin)
 # ----------------Weibull H-likelihood--------------------------------
 
 tic()
-testjm2 <- try(JMfit(glmeObject, survObject2, 
+testjm2 <- JMfit(glmeObject, survObject2, 
                      long_data, surv_data_final,
                      idVar="sid", eventTime="L",
                      survFit=fitCOX2,
-                     method = "h-likelihood", Silent = F), silent=T)
+                     method = "h-likelihood", Silent = T)
 
 new_sd2 = JMsd_aGH(testjm2, ghsize=4, srcpath=srcpath, paralle=T)
 ptm <- toc()
@@ -357,78 +381,52 @@ JMsummary(testjm2, newSD=new_sd2)
 
 
 
-
+#---------------------------------------------------------------------
 #------------------Weibull Interval Censored model--------------------
-
-
-surv_model <- survreg(
-  Surv(time = L, time2 = R, type = "interval2") ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
-  data = Sdata,
-  dist = "weibull"
-)
-
-
-
-
-
-survObject <- list(
-  fm = Surv(time = L, time2 = R, type = "interval2") ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
-  event = "interval",             
-  par = 'lambda',  # coefficients
-  disp = c("lambda_base", "phi"),  # true scale & shape
-  lower = c(0, 0),
-  upper = rep(Inf, 2),
-  distribution = "weibull_interval",
-  str_val = str_val_surv,
-  timegrid = timegrid_vec,
-  rnames = paste0("r", 1:(length(timegrid_vec) - 1))
-)
-
-
+#---------------------------------------------------------------------
 
 #-----------------------interval censored survival model---------------------------------
+
+# AFT Weibull Model
 surv_model <- survreg(
   Surv(time = L, time2 = R, type = "interval2") ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
   data = Sdata,
   dist = "weibull"
 )
 
-
+# PH Weibull Model
+surv_model_ph <- flexsurvreg(
+  Surv(L, R, type = "interval2") ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
+  data = Sdata,
+  dist = "weibullPH"   
+)
 
 
 #-------------(1) Create objects for longitudinal models---------------
 
+LLOQ = 2
 # right censored part
 CenObject <- list(
-  fm = Cij ~ t_star + t_star2 + sin_term + risk1 + risk2 + b11,
-  family = "binomial",
-  par = "eta",
-  ran.par = "b11",
-  disp = "eta_disp",
+  fm = Cij ~ t_star + sin_term + risk1 + risk2 + b11,
+  family='binomial', par='eta', ran.par="b11",
+  disp="eta5",
   lower = -Inf,
   upper = Inf,
-  str_val = coef(md2),
-  Cregime = 1,             # right-censored
-  truncated = TRUE,        # censored model
-  delim_val = threshold_nab
-)
-
+  str_val=coef(md2),
+  Cregime=1,
+  truncated=T, delim_val=LLOQ)
 
 
 
 # continuous data
 glmeObject1 <- list(
-  fm = NAb ~ t_star + t_star2 + sin_term + risk1 + risk2 + b11,
-  family = "normal",
-  par = "beta",
-  ran.par = "b11",
-  sigma = "sigma",
-  disp = "beta_disp",
-  lower = rep(-Inf, 6),
-  upper = rep(Inf, 6),
-  str_val = c(fixef(md1), sd(ranef(md1)$sid[, 1])),
-  CenObject = CenObject
-)
+  fm = NAb ~ t_star + sin_term + risk1 + risk2 + b11,
+  family='normal', par="beta", ran.par='b11', sigma='sigma',
+  disp='beta5',
+  lower = 0,
+  upper = Inf,
+  str_val=c(fixef(md1), sd(ranef(md1)$sid[,1])),
+  CenObject=CenObject)
 
 
 
@@ -436,9 +434,8 @@ glmeObject1 <- list(
 
 # binary data
 glmeObject2 <- list(
-  fm= Zij ~ 1 + t + sin_term + t_dij_star + b11 + b21,
-  family='binomial', 
-  par="alpha", 
+  fm= Zij ~ 1 + t + sin_term + t_dij_star + b11 + b21*t,
+  family='binomial', par="alpha", ran.par=c('b11','b21'),
   sigma=NULL, 
   disp=c("alpha4", 'alpha5'),
   lower=c(-Inf,0),
@@ -451,491 +448,117 @@ glmeObject <- list(glmeObject1, glmeObject2)
 
 
 #-------------(1) Create objects for survival models---------------
-timegrid_vec <- seq(min(surv_data$L, na.rm = TRUE), max(surv_data$R, na.rm = TRUE), by = 100)
 
+# rename the coefficients
+co <- coef(surv_model_ph)
 
-for (i in 1:(length(timegrid_vec) - 1)) {
-  varname <- paste0("r", i)
-  Sdata[[varname]] <- as.numeric(Sdata$L <= timegrid_vec[i] & Sdata$R > timegrid_vec[i])
-}
+phi <- exp(co["shape"])
+lambda_base <- exp(co["scale"])
+lambda_slopes <- co[c("GNE8_CD4", "risk1", "risk2", "b11", "b21")]
+str_val_surv <- c(unname(lambda_slopes), lambda_base, phi)
 
-
-str_val_surv <- c(
-  -summary(surv_model)$coeff[-1] / summary(surv_model)$scale,
-  exp(summary(surv_model)$coeff[1]),
-  1 / summary(surv_model)$scale
+names(str_val_surv) <- c(
+  "lambda0", "lambda1", "lambda2", "lambda3", "lambda4",
+  "lambda_base", "phi"
 )
-names(str_val_surv) <- c("lambda0", "lambda1", "lambda2", "lambda3", "lambda4", "lambda_base", "phi")
+
 
 
 
 
 survObject <- list(
-  fm = Surv(time = L, time2 = R, type = "interval2") ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
-  event = "interval",             
-  par = 'lambda',  # coefficients
-  disp = c("lambda_base", "phi"),  # true scale & shape
-  lower = c(0, 0),
+  fm   = Surv(L, R, type = "interval2") ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
+  event = "interval",
+  par   = "lambda",                 
+  disp  = c("lambda_base", "phi"),  
+  lower = c(0, 0),                  
   upper = rep(Inf, 2),
   distribution = "weibull_interval",
-  str_val = str_val_surv,
-  timegrid = timegrid_vec,
-  rnames = paste0("r", 1:(length(timegrid_vec) - 1))
+  str_val = str_val_surv
 )
 
 
-
-
-#----------------Joint modeling using h-likelihood method -------------------
-
-long_data <- long_data %>%
-  left_join(b11_df, by = "sid") %>%
-  left_join(b21_df, by = "sid")
-
-
-
-long_data <- long_data %>%
-  filter(!is.na(b11), !is.na(b21))
-
-Sdata <- Sdata %>%
-  filter(!is.na(b11), !is.na(b21))
-
-
-
-debug(estRaneff)
-
-jm_result <- try(JMfit(
+testjm_interval <- try(JMfit(
   glmeObject = glmeObject,
-  survObject = survObject,
-  long.data = long_data,
-  surv.data = Sdata,
-  idVar = "sid",
-  eventTime = "R",             # ?
-  survFit = surv_model,      
-  method = "h-likelihood"
-), silent=T)
+  survObject = survObject,   
+  long.data  = long_data,
+  surv.data  = Sdata,
+  idVar      = "sid",
+  eventTime  = NULL,        
+  survFit    = surv_model_ph,         
+  method     = "h-likelihood",
+  Silent     = FALSE
+), silent = TRUE)
 
 
-
-
-
-bad_sids <- c()
-unique_ids <- unique(long_data$sid)
-
-for (sid_i in unique_ids) {
-  subdat <- subset(long_data, sid == sid_i)
-  subsurv.dat <- subset(Sdata, sid == sid_i)
-  
-  result <- try({
-    estRaneff(
-      RespLog = RespLog, 
-      raneff = Jraneff, 
-      long.data = subdat,
-      surv.dat = subsurv.dat,
-      invSIGMA = invSIGMA0,
-      sigma = sigma0,
-      ParVal = fixedest0,
-      Silent = TRUE
-    )
-  }, silent = TRUE)
-  
-  if (inherits(result, "try-error")) {
-    cat("❌ Error with sid:", sid_i, "\n")
-    bad_sids <- c(bad_sids, sid_i)
-  } else {
-    cat("✅ OK for sid:", sid_i, "\n")
-  }
-}
-clean_long_data <- long_data[!(long_data$sid %in% bad_sids), ]
-clean_Sdata <- Sdata[!(Sdata$sid %in% bad_sids), ]
 
 
 
 #--------------simulation-----------------------
 
-
-
-
-# Step 1: set parameter
-n_sims_large <- 10
-n_sims <- 1000
-n_subjects <- 100
-param_names <- rownames(JMsummary(testjm1))
-estimates <- matrix(NA, nrow = length(rownames(JMsummary(testjm1))), ncol = n_sims_large,
-                    dimnames = list(param_names, NULL))
-std_errors <- matrix(NA, nrow = length(rownames(JMsummary(testjm1))), ncol = n_sims_large,
-                     dimnames = list(param_names, NULL))
-error_count <- 0
-
-
-# Cox version parameter
-lambda_pars <- c(2.237, 2.094, 1.176, -3.933, -1.430)  # GNE8_CD4, risk1, risk2, b11, b21
-beta_pars   <- c(0.421, 1.903, 0.622, 0.141, -0.272)   # intercept, t_star, sin, risk1, risk2
-eta_pars    <- c(-1.894, 0.943, 0.509, 1.337, -0.002)  # intercept, t_star, sin, risk1, risk2, b11
-alpha_pars  <- c(-1.762, 0.122, 1.773, -0.026)         # intercept, t, sin, t_dij_star, b11
-lambda_pars <- lambda_pars*7
-
-# get shape from real data
-# fit_wb <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
-#                  data = Sdata, dist = "weibull")
-
-# Weibull -> scale = 1 / shape
-# shape_phi <- 1 / fit_wb$scale # Weibull shape
-# logscale <- log(fit_wb$scale) # Weibull scale
- shape_phi <- 100
- logscale <- 	-450
-
-
-# Weibull survival model
-simulate_weibull <- function(lp, shape, logscale, n) {
-  # lp = X^T beta
-  # shape = k, logscale = log(lambda)
-  # S(t) = exp( - (lambda * t)^k ) = exp( - exp(logscale + log(t^k)) )
-  # inverse: T = ( -log(U) / lambda )^(1/k)
-  scale <- exp(logscale)  # lambda
-  u <- runif(n)
-  T <- (-log(u) / (scale * exp(lp)))^(1 / shape)
-  return(T)
-}
-
-
-for (i in 1:n_sims_large) {
-  cat("Simulation #", i, "\n")
-  
-  
-  
-for (i in 1:n_sims) {
-  
- 
-  
-  
-  # ---- Step 1: simulate longitudinal data (1–15th random number of t for each sid) ----
-  long_data_simulation <- purrr::map_dfr(1:n_subjects, function(sid) {
-    n_obs <- sample(2:15, 1)
-    real_t_density <- density(long_data$t)
-    positive_idx <- real_t_density$x >= 0
-    t <- sort(sample(
-      real_t_density$x[positive_idx],
-      size = n_obs,
-      prob = real_t_density$y[positive_idx],
-      replace = F
-    ))
-    
-    # t <-sort(round(60 * rbeta(n_obs, shape1 = 2.1, shape2 = 5.5)))
-    
-   
-    real_d_density <- density(long_data$t_dij_star)
-    positive_dx <- real_d_density$x >= 0
-    
-    
-    dose_times <- c(0,1,6,12,18,24,30)
-    A_ik <- 0.05 + 0.05 * (1:length(dose_times))
-    lambda_i <- runif(1, 0.1, 0.15)               
-    t_rise <- 2  
-    
-    
-    GNE8_CD4 <- sapply(t, function(ti) {
-      sum(sapply(1:length(dose_times), function(k) {
-        if (ti >= dose_times[k]) {
-          A_ik[k] * exp(-lambda_i * (ti - dose_times[k]))
-        } else {
-          0
-        }
-      })) + rnorm(1, 0, 0.02)
-    })
-    
-    
-#    t_dij_star <- sort(sample(real_d_density$x, size = n_obs, prob = real_d_density$y, replace = TRUE))
-    data.frame(
-      t = t,
-      sid = sid,
-      t_star = t / 12,
-      t_dij_star = sort(sample(real_d_density$x[positive_dx], size = n_obs, prob = real_d_density$y[positive_dx], replace = TRUE)),
-#      t_dij_star = sort(2 * rbeta(n_obs, shape1 = 1.5, shape2 = 5)),
-      risk1 = rbinom(n_obs, 1, 0.4),
-      risk2 = rbinom(n_obs, 1, 0.02),
-      GNE8_CD4 =  GNE8_CD4
-    )
-  })
-  
-  
-  # get sin_term
-  
-  
-  get_deltas <- function(df) {
-    vac_times <- c(0, 1, 6, 12, 18, 24, 30)
-    last_vac_time <- tail(vac_times, 1)
-    valid_delta_list <- list()
-    
-    for (j in 1:(length(vac_times) - 1)) {
-      start <- vac_times[j]
-      end <- vac_times[j + 1]
-      if (any(df$t >= start & df$t < end)) {
-        temp <- df[df$t >= start & df$t < end, ]
-        valid_delta_list[[length(valid_delta_list) + 1]] <- 
-          data.frame(
-            sid = temp$sid,
-            t = temp$t,
-            delta_ij = end - start
-          )
-      }
-    }
-    
-    sel <- df$t >= last_vac_time
-    if (any(sel)) {
-      temp <- df[sel, ]
-      valid_delta_list[[length(valid_delta_list) + 1]] <- 
-        data.frame(
-          sid = temp$sid,
-          t = temp$t,
-          delta_ij = temp$t - last_vac_time
-        )
-    }
-    
-    do.call(rbind, valid_delta_list)
-  }
-  
-  delta_df <- long_data_simulation %>%
-    group_by(sid) %>%
-    group_split() %>%
-    lapply(get_deltas) %>%
-    bind_rows()
-  
-  long_data_simulation <- long_data_simulation %>%
-    left_join(delta_df, by = c("sid", "t"))
-  
-  
-  
-  long_data_simulation <- long_data_simulation %>%
-    mutate(
-      sin_term = ifelse(delta_ij != 0,
-                        sin(pi * t_dij_star*7/30 / delta_ij),
-                        sin(pi * t_dij_star*7/30 / 0.01))
-    )
-  
-  
-  # ---- Step 2: add random effect b11, b21 ----
-  bi <- mvrnorm(n_subjects, mu = c(0, 0), Sigma = matrix(c(0.8, 0.3, 0.3, 0.8), 2))
-  ranef_df <- data.frame(sid = 1:n_subjects, b11 = bi[, 1], b21 = bi[, 2])
-  long_data_simulation <- long_data_simulation %>% left_join(ranef_df, by = "sid")
-  
-  # ---- Step 3: simulate event time from Weibull ----
-  surv_data_simulation <- long_data_simulation %>%
-    group_by(sid) %>%
-    summarise(
-      GNE8_CD4 = first(GNE8_CD4),
-      risk1 = first(risk1),
-      risk2 = first(risk2),
-      b11 = first(b11),
-      b21 = first(b21)
-    )
-  
-  
-  lp_surv <- with(surv_data_simulation,
-                  lambda_pars[1]*GNE8_CD4 + lambda_pars[2]*risk1 + lambda_pars[3]*risk2 +
-                    lambda_pars[4]*b11 + lambda_pars[5]*b21
-  )
-  
-  T_surv <- simulate_weibull(lp_surv, shape_phi, logscale, n_subjects)
-  
-  
-  # ---- Step 4: assign true event time ----
-  surv_data_simulation <- surv_data_simulation %>%
-    mutate(eventtime = T_surv)
-  
-  # ---- Step 5: set administrative censoring cutoff (e.g. 90th percentile) ----
-  cutoff <- quantile(T_surv, 0.9)
-  
-  # ---- Step 6: define observed time L and censoring indicator ----
-  surv_data_simulation <- surv_data_simulation %>%
-    mutate(
-      L = pmin(eventtime, cutoff),  # observed follow-up time (may be censored)
-      dropped_out_right = as.integer(eventtime >= cutoff)  # 1 = censored, 0 = event
-    )
-  
-
-  
-  long_data_simulation <- long_data_simulation %>%
-    left_join(surv_data_simulation %>% dplyr::select(sid, L), by = "sid") 
-  
-
-  
-  # ---- Step 8: simulate outcome（NAb, Cij, Zij） ----
-  X_long <- model.matrix(~ t_star + sin_term + risk1 + risk2 , data = long_data_simulation)
-  long_data_simulation$NAb <- as.numeric(X_long %*% beta_pars + long_data_simulation$b11 + rnorm(nrow(X_long), sd = 0.5))
-  
-  X_c <- model.matrix(~ t_star + sin_term + risk1 + risk2, data = long_data_simulation)
-  linpred_c <- as.numeric(X_c %*% eta_pars + long_data_simulation$b11)  # same as random intercept
-  long_data_simulation$Cij <- rbinom(nrow(X_c), 1, plogis(linpred_c))
-  
-  X_z <- model.matrix(~ t + sin_term + t_dij_star, data = long_data_simulation)
-  linpred_z <- as.numeric(X_z %*% alpha_pars + long_data_simulation$b11 + long_data_simulation$t * long_data_simulation$b21)
-  long_data_simulation$Zij <- rbinom(nrow(X_z), 1, plogis(linpred_z))
-  
-  # ---- Step 6: save result ----
-  write_csv(long_data_simulation, paste0("sim_data_long_", i, ".csv"))
-  write_csv(surv_data_simulation, paste0("sim_data_surv_", i, ".csv"))
-}
-
-
-
-#-------------------------testing----------------
-
-
-
-# (1) LME model 1
-md1_new <- lmer(
-  NAb ~ 1 + t_star + sin_term + risk1 + risk2 + (1 | sid),
-  data =long_data_simulation 
-)
-
-
-# get the estimated random effect by observation
-estBi <- data.frame(row.names(ranef(md1_new)$sid), 
-                    scale(ranef(md1_new)$sid, center=T,scale=T))
-names(estBi) <- c("sid", "esb11")
-mydat_new <- merge(long_data_simulation, estBi, by='sid',all=T)
-
-
-# (2) GLME model for NAb
-
-fm2_new <- Cij ~ 1 + t_star + sin_term + risk1 + risk2 + esb11
-md2_new <- glm(fm2_new, data = mydat_new, family = binomial())
-
-# (3) GLME model for Cij
-
-fm3_new <-  Zij ~ 1 + t + sin_term + t_dij_star + esb11 + ( t - 1 | sid)
-md3_new <- glmer(fm3_new, data = mydat_new, family = binomial())
-summary(md3_new)
-Sdata_new <- surv_data_simulation
-Sdata_new$esb11 <- scale(ranef(md1_new)$sid[,1], center=T, scale=T)
-Sdata_new$esb21 <- scale(ranef(md3_new)$sid[,1], center=T, scale=T)
-
-
-
-#---------------------right censored survival model----------------------
-# a Cox PH model
-fitCOX1_new <- coxph(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + esb11 + esb21, data = Sdata_new)   
-
-# a Weibull model
-fitCOX2_new <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + esb11 + esb21, data = Sdata_new, dist='weibull')
-
-
-############################################
-######   Joint modeling  right censored#####
-############################################
-
-
-
-#-------------(1) Create objects for longitudinal models---------------
-LLOQ = 2
-# right censored part
-CenObject_new <- list(
-  fm = Cij ~ t_star + sin_term + risk1 + risk2 + esb11,
-  family='binomial', par='eta', ran.par="esb11",
-  disp="eta5",
-  lower = -Inf,
-  upper = Inf,
-  str_val=coef(md2_new),
-  Cregime=1,
-  truncated=T, delim_val=LLOQ)
-
-
-
-# continuous data
-glmeObject1_new <- list(
-  fm = NAb ~ t_star + sin_term + risk1 + risk2 + esb11,
-  family='normal', par="beta", ran.par='esb11', sigma='sigma',
-  disp='beta5',
-  lower = 0,
-  upper = Inf,
-  str_val=c(fixef(md1_new), sd(ranef(md1_new)$sid[,1])),
-  CenObject=CenObject_new)
-
-
-
-
-
-# binary data
-glmeObject2_new <- list(
-  fm= Zij ~ 1 + t + sin_term + t_dij_star + esb11 + esb21*t,
-  family='binomial', par="alpha", ran.par=c('esb11','esb21'),
-  sigma=NULL, 
-  disp=c("alpha4", 'alpha5'),
-  lower=c(-Inf,0),
-  upper=rep(Inf,2),
-  str_val=c(fixef(md3_new), sd(ranef(md3_new)$sid[,1])),
-  CenObject=NULL)
-
-
-glmeObject_new <- list(glmeObject1_new, glmeObject2_new)
-
-
-
-
-### (2) Create object for survival model
-## case 1: if a Cox PH model is fit for survival data
-survObject1_new <- list(
-  fm= L ~ GNE8_CD4 + risk1 + risk2 + esb11 + esb21,
-  event="dropped_out_right", 
-  par='lambda',
-  disp=NULL,
-  lower=NULL, upper=NULL,
-  distribution=NULL,
-  str_val= summary(fitCOX1_new)$coeff[,1])
-
-## case 2: if a Weibull model is fit for survival data
-survObject2_new <- list(
-  fm= L ~ GNE8_CD4 + risk1 + risk2 + esb11 + esb21,
-  event="dropped_out_right", 
-  par='lambda',
-  disp=NULL,
-  lower=c(0, 0), upper=c(Inf, Inf),
-  distribution='weibull',
-  str_val= summary(fitCOX2_new)$coeff[-1])
-
-
-# ------------------ Cox model h-likelihood ----------------------
-tic()
-testjm1_new <- try(JMfit(glmeObject_new, survObject1_new, 
-                     long_data_simulation, surv_data_simulation,
-                     idVar="sid", eventTime="L",
-                     survFit=fitCOX1_new,
-                     method = "h-likelihood", Silent = F), silent=T)
-
-
-
-#---------------------------
-
-if (inherits(testjm1_new, "try-error")) {
-  error_count <- error_count + 1
-  next
-}
-
-coef_vec <- try(JMsummary(testjm1_new), silent = TRUE)
-se_vec <- try(JMsd_aGH(testjm1_new, ghsize=4, srcpath=srcpath, paralle=TRUE), silent = TRUE)
-
-if (inherits(coef_vec, "try-error") || inherits(se_vec, "try-error")) {
-  error_count <- error_count + 1
-  next
-}
-for (j in param_names) {
-  if (!is.na(coef_vec[j]) && !is.na(se_vec[j])) {
-    estimates[j, i] <- coef_vec[j]
-    std_errors[j, i] <- se_vec[j]
-  }
-}
-}
-
+1111
+#-----------------------------------
 #--------------Plot-----------------
-ggplot(long_data, aes(x = t, y =  GNE8_CD4, group = sid)) +
+#-----------------------------------
+
+
+
+# Oringal GNE8_CD4
+ggplot(long_data, aes(x = t, y =  sin_term, group = sid)) +
   geom_line(color = "black", alpha = 0.5) +   
   geom_point(color = "black", size = 1) + 
   labs(title = "GNE8_CD4 longitudinal trajectories", y = "GNE8_CD4", x = "month") +
   theme_minimal()
 
+ggplot(long_data_simulation, aes(x = t, y =  t_dij_star, group = sid)) +
+  geom_line(color = "black", alpha = 0.5) +   
+  geom_point(color = "black", size = 1) + 
+  labs(title = "GNE8_CD4 longitudinal trajectories", y = "GNE8_CD4", x = "month") +
+  theme_minimal()
+
+# randomly pick 5 sid,and draw their line plot (GEN8_CD4)
+set.seed(2020) # GEN -> 2025, NAb -> 2020
+subset_ids <- sample(unique(long_data$sid), 5)
+
+long_data %>% 
+  filter(sid %in% subset_ids) %>%
+  ggplot(aes(x = t, y = GNE8_CD4, group = sid, color = factor(sid))) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = paste("GNE8_CD4 trajectories for 5 random subjects"),
+    x = "Month", y = "GNE8_CD4", color = "Subject ID"
+  ) +
+  theme_minimal()
 
 
+# Original NAb
+ggplot(long_data, aes(x = t, y =  NAb, group = sid)) +
+  geom_line(color = "black", alpha = 0.5) +   
+  geom_point(color = "black", size = 1) + 
+  labs(title = "NAb longitudinal trajectories", y = "NAb", x = "month") +
+  theme_minimal()
+
+
+# randomly pick 5 sid,and draw their line plot (NAb)
+
+long_data %>% 
+  filter(sid %in% subset_ids) %>%
+  ggplot(aes(x = t, y = NAb, group = sid, color = factor(sid))) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = paste("NAb trajectories for 5 random subjects"),
+    x = "Month", y = "NAb", color = "Subject ID"
+  ) +
+  theme_minimal()
+
+
+
+
+
+
+# Simulated GEN8_CD4
 ggplot(long_data_simulation, aes(x = t, y = GNE8_CD4, group = sid)) +
   geom_line(color = "black", alpha = 0.5) +   
   geom_point(color = "black", size = 1) + 
