@@ -28,11 +28,15 @@ JMfit_HL <- function(glmeObject, survObject, long.data, surv.data, idVar, eventT
   } 
   
   #----------------weibull interval-censored ------------
-  else if (!is.null(survObject$distribution) && survObject$distribution == "weibull_interval") {
+  else if (class(survFit)=="survreg" &&
+      survObject$distribution == "weibull_ph_interval") {
+    weibPar <- c(
+      -summary(survFit)$coeff[1] / summary(survFit)$scale,
+      1 / summary(survFit)$scale
+    )
     
-    Sllike <- weibull_interval_loglike(survObject)
-    
-  }
+    Sllike <- weibull_ph_interval_loglike(survObject)}
+  
   #--------------------------------------------------------
   
   
@@ -46,6 +50,11 @@ JMfit_HL <- function(glmeObject, survObject, long.data, surv.data, idVar, eventT
   }
   
   Jlik2 <- Sllike$loglike  # log-likelihood function
+  
+  cat("Jlik1=", Jlik1, "\n")
+   cat("Jlik2=", Jlik2, "\n")
+  
+  
   Spar <- Sllike$par   # fixed parameters in survival model
   Sp <- length(Spar)  # dimension of fixed parameters in survival model
   SurvParValue <- Sllike$str_val  # starting values
