@@ -3,7 +3,18 @@
 estBaseHazard <- function(surv.data, Sllike, SurvParValue, Bi0, status, nblock){
   
   Etime <- surv.data[, Sllike$resp]
-  Twindow <- seq(min(Etime)-0.5, max(Etime)+0.5, length.out=nblock)
+  
+  # ----------In terms of month---------------------
+  
+  tmin <- min(Etime)
+  tmax <- max(Etime)
+  w <- (tmax - tmin) / (nblock - 1)
+  
+  pad <- w         
+  Twindow <- seq(tmin - pad, tmax + pad, length.out = nblock)
+  #-------------------------------------------------
+  
+#  Twindow <- seq(min(Etime)-0.5, max(Etime)+0.5, length.out=nblock)
   delta1 <- Twindow[1:(nblock-1)] # lower window
   delta2 <- Twindow[2:nblock]  # upper window
   Harz <- data.frame(delta1, delta2, h0=0, Th0=0)
@@ -30,7 +41,10 @@ estBaseHazard <- function(surv.data, Sllike, SurvParValue, Bi0, status, nblock){
   }
   
   for(i in 1:nrow(surv.data)){
-    (kk <- which(delta1<= Etime[i] & delta2> Etime[i]))
+#    (kk <- which(delta1<= Etime[i] & delta2> Etime[i]))
+    #---------------- in terms of month------------------
+    (kk <- findInterval(Etime[i], Harz$delta1))
+    #----------------------------------------------------
     (surv.data$h0[i] <- Harz$h0[kk])
     (surv.data$Th0[i] <- Harz$Th0[kk])
   }
