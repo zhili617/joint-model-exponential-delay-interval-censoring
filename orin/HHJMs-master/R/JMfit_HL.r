@@ -35,7 +35,7 @@ JMfit_HL <- function(glmeObject, survObject, long.data, surv.data, idVar, eventT
       1 / summary(survFit)$scale
     )
     
-    Sllike <- weibull_ph_interval_loglike(survObject)}
+    Sllike <- weibull_ph_interval_loglike(survObject, weibPar)}
   
   #--------------------------------------------------------
   
