@@ -29,6 +29,13 @@ fmReverse <- function(fm){
     rvZ <- NULL
     # group <- NULL
   }
+  resp_raw <- gsub(" ", "", response)
+  
+  if (startsWith(resp_raw, "Surv(")) {
+    inside <- sub("^Surv\\(|\\)$", "", resp_raw)
+    parts <- strsplit(inside, ",", fixed = TRUE)[[1]]
+    response <- parts   # c("L", "R")
+  }
   
   return(list(resp=response, rvX=rvX, rvZ=rvZ)) 
 }
