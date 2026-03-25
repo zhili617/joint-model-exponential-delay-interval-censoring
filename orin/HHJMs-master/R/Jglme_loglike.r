@@ -15,54 +15,15 @@ Jglme_loglike <- function(glmeObject, std=T){
    
   for(i in 1:k){
       glmeObject_i <- glmeObject[[i]]
-      glmmReturn <- glme_loglike(glmeObject_i, std)
+      # glmmReturn <- glme_loglike(glmeObject_i, std)
+      
+       glmmReturn <- model_loglike(glmeObject_i, std)
       
       
       
       
       if(is.null(glmeObject_i$CenObject) | 
          !is.list(glmeObject_i$CenObject)){  # NO CENSOR
-        
-        
-        
-        #####-------------weibull interval-censored log-likelihood function-------------
-        
-        if (!is.null(glmeObject_i$distribution) &&
-            glmeObject_i$distribution == "weibull_interval") {
-          
-          # use the weibull interval-censored log-likelihood
-          loglike_return <- weibull_interval_loglike(glmeObject_i)
-          
-          lik[[i]] <- loglike_return$loglike
-          fixed[[i]] <- glmeObject_i$par
-          raneff[[i]] <- NULL
-          rvX[[i]] <- NULL
-          rvZ[[i]] <- NULL
-          resp[[i]] <- glmeObject_i$resp
-          linear_pred[[i]] <- glmeObject_i$linear_pred
-          str_val[[i]] <- loglike_return$str_val
-          names(str_val[[i]]) <- fixed[[i]]
-          sigma[[i]] <- glmeObject_i$sigma
-          lower[[i]] <- glmeObject_i$lower
-          upper[[i]] <- glmeObject_i$upper
-          disp[[i]] <- glmeObject_i$disp
-          
-          next
-          
-          
-        }
-        
-        #####--------------------------------------------------------
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         
         
         
@@ -109,7 +70,8 @@ Jglme_loglike <- function(glmeObject, std=T){
 
       } else if(is.list(glmeObject_i$CenObject)){ 
         CenObject <- glmeObject_i$CenObject
-        Creturn <- glme_loglike(CenObject, std)
+        # Creturn <- glme_loglike(CenObject, std)
+        Creturn <- model_loglike(CenObject, std)
         Cresp <- Creturn$resp
         fixed[[i]] <- c(glmmReturn$fixed, Creturn$fixed) 
         raneff[[i]] <- c(glmmReturn$raneff, Creturn$raneff)
