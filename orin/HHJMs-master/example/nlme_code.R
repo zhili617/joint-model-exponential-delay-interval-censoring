@@ -9,7 +9,7 @@ dataset <- read_csv("E:/UBC/Final Project/vax004dataAb.txt")
 
 
 # For simplification, if an sid has NA value in any variable, then delate all the rows of this sid
-dataset_new <- dataset %>%
+dataset_new_NLME <- dataset %>%
   group_by(sid) %>%
   filter(Vxind == 1, HIVinfectionind == 0) %>%      # 2815
   filter(n() > 1) %>%                             # Keep only sids with more than 1 record     2759
@@ -19,47 +19,55 @@ dataset_new <- dataset %>%
   filter(!any(is.na(across(everything())))) %>%  # Remove rows with NA
   ungroup()     #2235
 
-dataset_new$sid <- as.factor(dataset_new$sid)
+dataset_new_NLME$sid <- as.factor(dataset_new_NLME$sid)
 
 #----------------------------------------vaccine time to vaccine month-------------------
 month_map <- c(`1` = 0, `2` = 1, `3` = 6, `4` = 12, `5` = 18, `6`= 24, `7` = 30)
-dataset_new$vaccine_month <- month_map[as.character(dataset_new$dosenumberschedule)]
+dataset_new_NLME$vaccine_month <- month_map[as.character(dataset_new_NLME$dosenumberschedule)]
 
 
 # method 1 : dosedays + (dose month[close] - dose month[k])
-dataset_new <- dataset_new %>%
+dataset_new_NLME <- dataset_new_NLME %>%
   mutate(
     dosedays = dplyr::coalesce(dosedays, dosedays),
     # Scheduled order of most recent immunization (1..7)
     m = as.integer(dosenumberschedule)  
   )
 
+# In terms of month
+dataset_new_NLME <- dataset_new_NLME %>%
+  mutate(
+    t = sampledays / 30,
+    t_dose   = dosedays   / 30
+  )
+
+
 plan_months <- c(0, 1, 6, 12, 18, 24, 30)
-mdays <- plan_months * 30.44
+mdays <- plan_months #* 30.44
 
 mk_cols <- paste0("k", 1:7)
 for (k in 1:7) {
   lag_col <- paste0("lag_", mk_cols[k])
   ind_col <- paste0("ind_", mk_cols[k])
-  dataset_new[[lag_col]] <- with(dataset_new, pmax((mdays[pmax(m,1)] - mdays[k]), 0))
-  dataset_new[[ind_col]] <- with(dataset_new, ifelse(!is.na(m) & m >= k, 1L, 0L))
+  dataset_new_NLME[[lag_col]] <- with(dataset_new_NLME, pmax((mdays[pmax(m,1)] - mdays[k]), 0))
+  dataset_new_NLME[[ind_col]] <- with(dataset_new_NLME, ifelse(!is.na(m) & m >= k, 1L, 0L))
 }
 
 
 
-# method 2: sampledays - dose month
+# method 2: t - dose month
 plan_months <- c(0, 1, 6, 12, 18, 24, 30)
-mdays <- plan_months * 30.44   # dose month into dose day
+mdays <- plan_months #* 30.44   # dose month into dose day
 
 for (k in 1:7) {
   lag_col <- paste0("lag_k", k)   
   ind_col <- paste0("ind_k", k)
   
   # ensure result >= 0
-  dataset_new[[lag_col]] <- pmax(dataset_new$sampledays - mdays[k], 0)
+  dataset_new_NLME[[lag_col]] <- pmax(dataset_new_NLME$t - mdays[k], 0)
   
-  # make sure we choose sampledays > dose month
-  dataset_new[[ind_col]] <- as.integer(dataset_new$sampledays + 1e-8 >= mdays[k])
+  # make sure we choose t > dose month & they alreay have that dose (m>=k)
+  dataset_new_NLME[[ind_col]] <- as.integer(dataset_new_NLME$m >= k & dataset_new_NLME$t + 1e-8 >= mdays[k])
 }
 
 # non-linear equation Sum_{k=1..7} A_k * I_{k <= m} * exp(-lambda * lag_k)
@@ -74,12 +82,12 @@ nl_formula <- NAb ~
 
 start_nls <- list(
   A1=.5,A2=.6,A3=.6,A4=.6,A5=.5,A6=.5,A7=.5,
-  lambda=.30
+  lambda= 1
 )
 
 fit_nls <- nls(
-  nl_formula, data=dataset_new, start=start_nls, algorithm="port",
-  lower=c(A1=0,A2=0,A3=0,A4=0,A5=0,A6=0,A7=0, lambda=0.05),
+  nl_formula, data=dataset_new_NLME, start=start_nls, algorithm="port",
+  lower=c(A1=0,A2=0,A3=0,A4=0,A5=0,A6=0,A7=0, lambda=0.15),
   upper=c(A1=Inf,A2=Inf,A3=Inf,A4=Inf,A5=Inf,A6=Inf,A7=Inf, lambda=2),
   control=nls.control(maxiter=500, tol=1e-4, minFactor=1/2048)
 )
@@ -88,12 +96,12 @@ fit_nls <- nls(
 
 fit_nlme <- nlme(
   model = nl_formula,
-  data  = groupedData(NAb ~ sampledays | sid, data = dataset_new),
+  data  = groupedData(NAb ~ t | sid, data = dataset_new_NLME),
   fixed = A1 + A2 + A3 + A4 + A5 + A6 + A7 + lambda ~ 1,
-  random =  lambda ~ 1 | sid,
+  random =  list(sid = pdDiag(lambda  ~ 1)),
   start = as.numeric(coef(fit_nls)),
   control = nlmeControl(
-    maxIter=200, pnlsMaxIter=300, msMaxIter=200,
+    maxIter=2000, pnlsMaxIter=3000, msMaxIter=2000,
     tolerance = 1e-5, pnlsTol = 1e-5)
 )
 
@@ -111,10 +119,10 @@ for (k in 1:7) {
   lag_col <- paste0("lag_k", k)
   ind_col <- paste0("ind_k", k)
   
-  raw_lag <- dataset_new$sampledays - mdays[k]   
+  raw_lag <- dataset_new_NLME$t - mdays[k]   
   
-  dataset_new[[ind_col]] <- as.integer(raw_lag > 0)       
-  dataset_new[[lag_col]] <- ifelse(raw_lag > 0, raw_lag, 1)  
+  dataset_new_NLME[[ind_col]] <- as.integer(dataset_new_NLME$m >= k & raw_lag > 0)       
+  dataset_new_NLME[[lag_col]] <- ifelse(raw_lag > 0, raw_lag, 1)  
 }
 
 # Sum_{k=1..7} C_k * I_{k<=m} * (lag_k)^(-m)
@@ -127,11 +135,11 @@ nl_formula_pl <- NAb ~
   C6 * ind_k6 * (lag_k6 )^(-m) +
   C7 * ind_k7 * (lag_k7 )^(-m)
 
-start_vals_pl <- c(C1=.3, C2=.3, C3=.3, C4=.3, C5=.3, C6=.3, C7=.3, m=0.6)
+start_vals_pl <- c(C1=.3, C2=.3, C3=.3, C4=.3, C5=.3, C6=.3, C7=.3, m=0.03)
 
 fit_nlme_pl <- nlme(
   model  = nl_formula_pl,
-  data   = groupedData(NAb ~ sampledays | sid, data = dataset_new),
+  data   = groupedData(NAb ~ t | sid, data = dataset_new_NLME),
   fixed  = C1 + C2 + C3 + C4 + C5 + C6 + C7 + m ~ 1,
   random = m ~ 1 | sid,
   start  = start_vals_pl,
@@ -160,9 +168,9 @@ AIC(fit_nlme)
 
 
 set.seed(2) 
-selected_sids <- sample(unique(dataset_new$sid), 4)
+selected_sids <- sample(unique(dataset_new_NLME$sid), 4)
 
-dataset_plot <- dataset_new %>%
+dataset_plot <- dataset_new_NLME %>%
   mutate(
     observed = NAb,
     fit = predict(fit_nlme, level = 0)  
@@ -174,7 +182,7 @@ plot_data <- dataset_plot %>%
                names_to = "type",
                values_to = "value")
 
-ggplot(plot_data, aes(x = sampledays, y = value, color = type)) +
+ggplot(plot_data, aes(x = t, y = value, color = type)) +
   geom_point(data = subset(plot_data, type == "observed")) +
   geom_line(data = subset(plot_data, type == "fit")) +
   facet_wrap(~ sid, scales = "free_x") +
@@ -192,7 +200,7 @@ ggplot(plot_data, aes(x = sampledays, y = value, color = type)) +
 
 
 # ------------predicted graph in total --------------------------
-dataset_plot <- dataset_new %>%
+dataset_plot <- dataset_new_NLME %>%
   mutate(
     observed = NAb,
     fit = predict(fit_nlme, level = 1)   
@@ -203,7 +211,7 @@ plot_data <- dataset_plot %>%
                names_to = "type",
                values_to = "value")
 
-ggplot(plot_data, aes(x = sampledays, y = value, color = type, group = interaction(sid, type))) +
+ggplot(plot_data, aes(x = t, y = value, color = type, group = interaction(sid, type))) +
   geom_point(data = subset(plot_data, type == "observed"), alpha = 0.5) +
   geom_line(data = subset(plot_data, type == "fit"), alpha = 0.7) +
   labs(
@@ -219,7 +227,7 @@ ggplot(plot_data, aes(x = sampledays, y = value, color = type, group = interacti
 
 
 # ----------------Original NAb graph----------------------------
-ggplot(dataset_new, aes(x = sampledays, y = NAb, group = sid)) +
+ggplot(dataset_new_NLME, aes(x = t, y = NAb, group = sid)) +
   geom_line(alpha = 0.6, color = "steelblue") +
   geom_point(alpha = 0.4, color = "steelblue") +
   labs(
@@ -232,12 +240,12 @@ ggplot(dataset_new, aes(x = sampledays, y = NAb, group = sid)) +
 
 # random 5 cases
 set.seed(222)  
-sid_sample <- sample(unique(dataset_new$sid), 5)
+sid_sample <- sample(unique(dataset_new_NLME$sid), 5)
 
-random_NAb_ori <- dataset_new %>%
+random_NAb_ori <- dataset_new_NLME %>%
   dplyr::filter(sid %in% sid_sample)
 
-ggplot(random_NAb_ori, aes(x = sampledays, y = NAb, color = sid, group = sid)) +
+ggplot(random_NAb_ori, aes(x = t, y = NAb, color = sid, group = sid)) +
   geom_line(alpha = 0.8, linewidth = 1) +
   geom_point(alpha = 0.7, size = 2) +
   labs(
@@ -255,15 +263,15 @@ ggplot(random_NAb_ori, aes(x = sampledays, y = NAb, color = sid, group = sid)) +
 # Model 1
 # ----------------------------------------
 
-set.seed(10)
-sids_sample <- sample(unique(dataset_new$sid), 3) #randomly choose 3 sid
+set.seed(50) #80
+sids_sample <- sample(unique(dataset_new_NLME$sid), 1) #randomly choose 3 sid
 
-tgrid <- seq(min(dataset_new$sampledays),
-             max(dataset_new$sampledays), length.out=200)
+tgrid <- seq(min(dataset_new_NLME$t),
+             max(dataset_new_NLME$t), length.out=200)
 
 # define model formula
 f_model1 <- function(t, A, lambda, plan_months=c(0,1,6,12,18,24,30)) {
-  mdays <- plan_months * 30.44
+  mdays <- plan_months #* 30.44
   val <- rep(0, length(t))
   for (k in 1:7) {
     Ak <- A[k]
@@ -273,42 +281,49 @@ f_model1 <- function(t, A, lambda, plan_months=c(0,1,6,12,18,24,30)) {
   return(val)
 }
 
-par(mfrow=c(3,1))  # put 3 graph into same line
+# par(mfrow=c(3,1))  # put 3 graph into same line
 for (sid_i in sids_sample) {
   
-  dat_i <- dataset_new %>% filter(sid == sid_i)
+  dat_i <- dataset_new_NLME %>% filter(sid == sid_i)
   
   # orginal point (from data)
-  plot(dat_i$sampledays, dat_i$NAb, pch=16, col="black",
-       main=paste("SID =", sid_i), xlab="Days", ylab="NAb")
+  plot(dat_i$t, dat_i$NAb, pch=16, col="black",
+       main=paste("SID =", sid_i), xlab="Months", ylab="NAb")
   
-  # predicted value 
-  pred_points <- predict(fit_nlme, dat_i, level=1)
-  points(dat_i$sampledays, pred_points, col="red", pch=19)
+  # subject-specific parameters (fixed + random) for that sid
+  coefs_sid <- coef(fit_nlme)[as.character(sid_i), ]
   
-  # model curve (based on fixed effects parameter)
-  coefs <- fixef(fit_nlme)
-  A <- coefs[paste0("A", 1:7)]
-  lambda <- coefs["lambda"]
-  curve_model <- f_model1(tgrid, A, lambda)
-  lines(tgrid, curve_model, col="blue", lwd=2)
+  # nlme fitted values at observed times (includes random effects, incl A2 if random)
+  pred_points <- predict(fit_nlme, newdata = dat_i, level = 1)
+  points(dat_i$t, pred_points, col = "red", pch = 19)
   
-  legend("topright", legend=c("Observed","nlme fit","Formula curve"),
-         col=c("black","red","blue"), pch=c(16,19,NA),
-         lty=c(NA,NA,1), bty="n")
+  
+  A_names <- paste0("A", 1:7)         
+  A_vals  <- as.numeric(coefs_sid[A_names])
+  names(A_vals) <- A_names
+  lambda_val <- as.numeric(coefs_sid["lambda"])
+  
+  # curve using subject-specific parameters (this is the key change!)
+  curve_model <- f_model1(tgrid, A = A_vals, lambda = lambda_val)
+  
+  lines(tgrid, curve_model, col = "blue", lwd = 2)
+  
+  legend("bottomright", legend = c("Observed", "nlme fit", "Formula curve"),
+         col = c("black", "red", "blue"), pch = c(16, 19, NA),
+         lty = c(NA, NA, 1), bty = "n")
 }
-
 
 
 
 #-----------------------------------------------
 # Model 3
 #-----------------------------------------------
+
 # define power-law function
 f_model2 <- function(t, C1, C2, C3, C4, C5, C6, C7, m,
                      plan_months = c(0,1,6,12,18,24,30)) {
 
-  mdays <- plan_months * 30.44
+  mdays <- plan_months #* 30.44
 
   # pure lag (no repair)
   lag1 <- t - mdays[1]
@@ -335,38 +350,48 @@ f_model2 <- function(t, C1, C2, C3, C4, C5, C6, C7, m,
 
 
 
-tgrid <- seq(min(dataset_new$sampledays),
-             max(dataset_new$sampledays), length.out=200)
+tgrid <- seq(min(dataset_new_NLME$t),
+             max(dataset_new_NLME$t), length.out=200)
 
-par(mfrow=c(3,1))
+# par(mfrow=c(3,1))
 for (sid_i in sids_sample) {
   
-  dat_i <- dataset_new %>% filter(sid == sid_i)
+  dat_i <- dataset_new_NLME %>% filter(sid == sid_i)
   
-  plot(dat_i$sampledays, dat_i$NAb, pch=16, col="black",
-       main=paste("SID =", sid_i), xlab="Days", ylab="NAb")
+  plot(dat_i$t, dat_i$NAb, pch=16, col="black",
+       main=paste("SID =", sid_i), xlab="Months", ylab="NAb")
   
   pred_points <- predict(fit_nlme_pl, dat_i, level=1)
-  points(dat_i$sampledays, pred_points, col="red", pch=19)
+  points(dat_i$t, pred_points, col="red", pch=19)
   
   # find fixed effects parameter
-  coefs_pl <- fixef(fit_nlme_pl)
-  C <- coefs_pl[paste0("C", 1:7)]
-  m <- coefs_pl["m"]
+  coefs_pl <- coef(fit_nlme_pl)[as.character(sid_i), ]
+  C <- as.numeric(coefs_pl[paste0("C", 1:7)])
+  m <- as.numeric(coefs_pl["m"])
+  
   
   # model curve
   curve_model2 <- f_model2(
     tgrid,
-    C1 = coefs_pl["C1"], C2 = coefs_pl["C2"], C3 = coefs_pl["C3"],
-    C4 = coefs_pl["C4"], C5 = coefs_pl["C5"], C6 = coefs_pl["C6"], C7 = coefs_pl["C7"],
-    m  = coefs_pl["m"]
+    C1 = as.numeric(coefs_pl[["C1"]]),
+    C2 = as.numeric(coefs_pl[["C2"]]),
+    C3 = as.numeric(coefs_pl[["C3"]]),
+    C4 = as.numeric(coefs_pl[["C4"]]),
+    C5 = as.numeric(coefs_pl[["C5"]]),
+    C6 = as.numeric(coefs_pl[["C6"]]),
+    C7 = as.numeric(coefs_pl[["C7"]]),
+    m  = as.numeric(coefs_pl[["m"]])
   )
+  
   
   lines(tgrid, curve_model2, col="blue", lwd=2)
   
-  legend("topright", legend=c("Observed","nlme fit","Formula curve"),
-         col=c("black","red","blue"), pch=c(16,19,NA),
-         lty=c(NA,NA,1), bty="n")
+  legend("bottomright",
+         legend = c("Observed","nlme fit","Formula curve"),
+         col = c("black","red","blue"),
+         pch = c(16,19,NA),
+         lty = c(NA,NA,1),
+         bty = "n")
 }
 
 
@@ -418,14 +443,14 @@ fit_nlme_safe <- function(long_b,
                                                 tolerance=1e-5, pnlsTol=1e-5,
                                                 returnObject=TRUE)) {
   # groupedData needs the same id variable name
-  gd <- groupedData(formula = as.formula(paste0("NAb ~ sampledays | ", idVar)), data = long_b)
+  gd <- groupedData(formula = as.formula(paste0("NAb ~ t | ", idVar)), data = long_b)
   
   fit <- tryCatch(
     nlme(
       model = nl_formula,
       data  = gd,
       fixed = A1 + A2 + A3 + A4 + A5 + A6 + A7 + lambda ~ 1,
-      random = lambda ~ 1 | sid,
+      random = as.formula(paste0("lambda ~ 1 | ", idVar)),
       start = start,
       control = control,
       na.action = na.exclude
@@ -468,6 +493,7 @@ add_lambda_to_surv <- function(fit_nlme_b, surv_b, idVar = "sid",
   out
 }
 
+
 # ---------- helper: fit Cox safely ----------
 fit_cox_safe <- function(surv_df,
                          timeVar = "L",
@@ -508,6 +534,17 @@ two_step_bootstrap <- function(long_data,
   ok_cox  <- logical(B)
   err_msg <- character(B)
   
+  # storage (Cox)
+  cox_names <- c("GNE8_CD4","risk1","risk2","lambda_cov")
+  beta_mat <- matrix(NA_real_, nrow = B, ncol = length(cox_names),
+                     dimnames = list(NULL, cox_names))
+  
+  # storage (NLME fixed effects)
+  nlme_names <- names(fixef(fit_nlme_ref))  # A1..A7 + lambda
+  nlme_fixef_mat <- matrix(NA_real_, nrow = B, ncol = length(nlme_names),
+                           dimnames = list(NULL, nlme_names))
+  
+  
   for (b in 1:B) {
     if (!is.null(verbose_every) && b %% verbose_every == 0) {
       message("Bootstrap ", b, "/", B)
@@ -525,6 +562,10 @@ two_step_bootstrap <- function(long_data,
       next
     }
     ok_nlme[b] <- TRUE
+    
+    # ---- NEW: store NLME fixed effects ----
+    fe <- fixef(fit_b)
+    nlme_fixef_mat[b, names(fe)] <- as.numeric(fe)
     
     # Build survival covariate (lambda)
     surv_b2 <- add_lambda_to_surv(fit_b, surv_b, idVar = idVar,
@@ -549,9 +590,28 @@ two_step_bootstrap <- function(long_data,
     mutate(iter = 1:B, ok_nlme = ok_nlme, ok_cox = ok_cox, err = err_msg) %>%
     relocate(iter, ok_nlme, ok_cox, err)
   
+  nlme_fixef_df <- as.data.frame(nlme_fixef_mat) %>%
+    mutate(iter = 1:B, ok_nlme = ok_nlme, err = err_msg) %>%
+    relocate(iter, ok_nlme, err)
+  
+  
   # summary on successful runs
   keep <- which(ok_nlme & ok_cox)
   beta_keep <- beta_mat[keep, , drop = FALSE]
+  
+  keep_nlme <- which(ok_nlme)
+  nlme_keep <- nlme_fixef_mat[keep_nlme, , drop = FALSE]
+  
+  nlme_summ <- tibble(
+    term = colnames(nlme_keep),
+    mean = apply(nlme_keep, 2, mean, na.rm = TRUE),
+    se   = apply(nlme_keep, 2, sd,   na.rm = TRUE),
+    q025 = apply(nlme_keep, 2, quantile, probs = 0.025, na.rm = TRUE),
+    q975 = apply(nlme_keep, 2, quantile, probs = 0.975, na.rm = TRUE),
+    n_success = length(keep_nlme),
+    B_total = B
+  )
+  
   
   summ <- tibble(
     term = colnames(beta_keep),
@@ -572,11 +632,14 @@ two_step_bootstrap <- function(long_data,
   
   list(
     beta_each = beta_df,
-    summary = summ
+    summary = summ,
+    nlme_fixef_each = nlme_fixef_df,
+    nlme_fixef_summary = nlme_summ
   )
+  
 }
 res <- two_step_bootstrap(
-  long_data = dataset_new,
+  long_data = dataset_new_NLME,
   surv_data_final = surv_data_final,
   nl_formula = nl_formula,
   fit_nlme_ref = fit_nlme,
@@ -585,7 +648,7 @@ res <- two_step_bootstrap(
   idVar = "sid",
   timeVar = "L",
   eventVar = "dropped_out_right",
-  lambda_use = "lambda_i",          # 或 "b_lambda"
+  lambda_use = "lambda_i",          # or "b_lambda"
   standardize_lambda = TRUE,
   verbose_every = 50
 )
