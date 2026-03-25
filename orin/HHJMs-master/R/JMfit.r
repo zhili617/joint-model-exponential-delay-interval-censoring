@@ -24,8 +24,8 @@ JMfit <- function(
   #### arguments, must specified by users  ####
   glmeObject, survObject, long.data, surv.data, idVar, eventTime, survFit,
   # arguments with defualt values
-  method = c("h-likelihood", "aGH"), itertol = 1e-3, Ptol = 1e-2, epsilon = 1e-6,
-  iterMax = 10,  ghsize = 4, srcpath = NULL, parallel = F, Silent = T){
+  method = c("h-likelihood", "aGH"), itertol = 1e-2, Ptol = 1e-2, epsilon = 1e-6,
+  iterMax = 30,  ghsize = 4, srcpath = NULL, parallel = F, Silent = T){
   
   method <- match.arg(method)
   
