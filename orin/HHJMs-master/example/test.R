@@ -511,30 +511,29 @@ survObject_nlme <- list(
 
 
   JMsummary(H)
-  JMsummary(nlme_result) # two random effect in NLME shared with COX
   
   
   
-  fitCOX2_nlme <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b_11 + b_21, data = Sdata_nlme, dist='weibull')
-  
-  surv_data_final <- as.data.frame(surv_data_final)
-  
-  survObject2_nlme <- list(
-    fm= L ~ GNE8_CD4 + risk1 + risk2 + b_11 + b_21,
-    event="dropped_out_right", 
-    par='xi',
-    disp=NULL,
-    lower=c(0, 0), upper=c(Inf, Inf),
-    distribution='weibull',
-    str_val= -summary(fitCOX2_nlme)$coeff[-1]/summary(fitCOX2_nlme)$scale)
-  
-  H_weibull <- JMfit(
-    glmeObject = glmeObject_nlme,
-    survObject = survObject2_nlme,
-    long.data = long_df, 
-    surv.data = surv_data_final,
-    idVar="sid", 
-    eventTime="L",
-    survFit= fitCOX2_nlme,
-    method = "h-likelihood", Silent=F)
+  # fitCOX2_nlme <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b_11 + b_21, data = Sdata_nlme, dist='weibull')
+  # 
+  # surv_data_final <- as.data.frame(surv_data_final)
+  # 
+  # survObject2_nlme <- list(
+  #   fm= L ~ GNE8_CD4 + risk1 + risk2 + b_11 + b_21,
+  #   event="dropped_out_right", 
+  #   par='xi',
+  #   disp=NULL,
+  #   lower=c(0, 0), upper=c(Inf, Inf),
+  #   distribution='weibull',
+  #   str_val= -summary(fitCOX2_nlme)$coeff[-1]/summary(fitCOX2_nlme)$scale)
+  # 
+  # H_weibull <- JMfit(
+  #   glmeObject = glmeObject_nlme,
+  #   survObject = survObject2_nlme,
+  #   long.data = long_df, 
+  #   surv.data = surv_data_final,
+  #   idVar="sid", 
+  #   eventTime="L",
+  #   survFit= fitCOX2_nlme,
+  #   method = "h-likelihood", Silent=F)
   
