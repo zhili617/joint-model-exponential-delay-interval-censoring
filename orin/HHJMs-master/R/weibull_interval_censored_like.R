@@ -1,79 +1,74 @@
-#' Create interval-censored Weibull log-likelihood function
-#' For use in joint model survival component
-
-weibull_interval_loglike <- function(survObject) {
-  # Extract required elements from the survObject
-  model <- survObject$fm
-  timegrid <- survObject$timegrid
-  distribution <- survObject$distribution
-  lower <- survObject$lower
-  upper <- survObject$upper
-  sigma <- survObject$sigma
-  str_val <- survObject$str_val
+#' Weibull PH interval-censored log-likelihood (for survival component)
+weibull_ph_interval_loglike <- function(survObject, weibPar){
   
-  # Extract variable names from model formula
+  model <- survObject$fm # equation : Surv(L, R) ~ x1 + x2 + ...
+  resp  <- fmReverse(model)$resp # Surv(L,R)
+  rvX   <- fmReverse(model)$rvX # name of independent variables
+  event <- survObject$event
+  
+  
+  # names for L, R
   model_vars <- all.vars(model)
-  resp_vars <- model_vars[1:2]  # L and R
-  covariates <- model_vars[-(1:2)]  # fixed effects
+  L_name <- model_vars[1]
+  R_name <- model_vars[2]
   
-  # Build parameter names based on 'par' field
-  n_cov <- length(covariates)
-  par_names <- paste0(survObject$par, 0:(n_cov - 1))
-  names(str_val)[1:n_cov] <- par_names
-  
-  # Construct linear predictor string
-  linear_pred <- paste(par_names, "*", covariates, collapse = " + ")
-  
-  # Extract scale and shape parameter names
-  par_lambda <- survObject$disp[1]  # usually "lambda"
-  par_phi <- survObject$disp[2]     # usually "phi"
-  
-  # Determine number of intervals
-  n_interval <- length(timegrid) - 1
-  loglike_parts <- vector("list", n_interval)
-  
-  # Build log-likelihood expression
-  for (j in 1:n_interval) {
-    t_j1 <- paste0("(", timegrid[j], ")^", par_phi)
-    t_j <- paste0("(", timegrid[j + 1], ")^", par_phi)
-    delta_j <- paste0("(", t_j, " - ", t_j1, ")")
-    
-    haz_expr <- paste0(par_lambda, " * exp(", linear_pred, ") * ", delta_j)
-    pi_ij <- paste0("1 - exp(-(", haz_expr, "))")
-    
-    if (j == 1) {
-      inner_sum <- ""
-    } else {
-      inner_terms <- c()
-      for (l in 1:(j - 1)) {
-        t_l <- paste0("(", timegrid[l + 1], ")^", par_phi)
-        t_l1 <- paste0("(", timegrid[l], ")^", par_phi)
-        delta_l <- paste0("(", t_l, " - ", t_l1, ")")
-        term_l <- paste0("-(", par_lambda, " * exp(", linear_pred, ") * ", delta_l, ")")
-        inner_terms <- c(inner_terms, term_l)
-      }
-      inner_sum <- paste(inner_terms, collapse = " + ")
-    }
-    
-    rname <- paste0("r", j)
-    loglike_j <- paste0("(", rname, ") * (", inner_sum, if (inner_sum != "") " + ", "log(", pi_ij, "))")
-    loglike_parts[[j]] <- loglike_j
+  # beta names + linear_pred 
+  if(sum(toupper(rvX)=='NULL')>0 | sum(rvX=='1')>0){ # ensure there are covariance
+    linear1 <- "0"
+    par <- c()
+  } else {
+    p <- length(rvX) # number of covariance
+    par <- paste(survObject$par, 1:p-1, sep="") # name of parameters eg. lambda0, lambda1, ...
+    linear1 <- paste(par,"*", rvX, collapse="+", sep="") # if par = c("lambda0","lambda1") and rvX=c("risk1","risk2")，we have: "lambda0*risk1+lambda1*risk2"
   }
+  linear_pred <- linear1
   
-  loglike_expr <- paste(loglike_parts, collapse = " + ")
+  # Weibull PH params
+  if(is.null(weibPar)) weibPar <- c(0, 1)  # initial Wlogscale, Wshape, if there is no weibPar
+  Wlogscale <- "Wlogscale"
+  Wshape    <- "Wshape"
   
-  # Display the final expression
-  message("=== Interval-censored Weibull Log-Likelihood Expression ===")
-  cat(loglike_expr, "\n")
+  SL <- paste0("exp( -exp(", Wlogscale, "+(", linear_pred, ")) * (", L_name, ")^", Wshape, " )")
+  SR <- paste0("exp( -exp(", Wlogscale, "+(", linear_pred, ")) * (", R_name, ")^", Wshape, " )")
   
-  return(list(
-    resp = resp_vars,
-    loglike = loglike_expr,
-    par = par_names,
-    linear_pred = linear_pred,
-    str_val = str_val,
-    sigma = sigma,
-    lower = lower,
-    upper = upper
-  ))
+  
+  
+  # eps <- 1e-16 # incase S(L)-S(R) = 0
+  # loglike <- paste0(
+  #  "  log( (", SL, " - ", SR, ") )  "
+  #  )
+  
+  
+  eps <- 1e-16
+  
+  logSL <- paste0(
+    "-exp(", Wlogscale, "+(", linear_pred, ")) * (", L_name, ")^", Wshape
+  )
+  logSR <- paste0(
+    "-exp(", Wlogscale, "+(", linear_pred, ")) * (", R_name, ")^", Wshape
+  )
+  
+  
+  # The case with only interval censored
+  loglike_int <- paste0(
+    "(", logSL, ") + log( 1 - exp( (", logSR, ") - (", logSL, ") ) + ", eps, " )"
+  )
+  
+  # The case with only right censored
+  loglike_right <- logSL
+  
+  # The case with both interval-censored and right-censored
+   # loglike <- paste0(
+     # "(", event, ")*(", loglike_int, ") + ",
+     # "(1-(", event, "))*(", loglike_right, ")")
+  
+  
+  # parameters
+  str_val <- c(survObject$str_val, weibPar)
+  par <- c(par, Wlogscale, Wshape)
+  names(str_val) <- par #Notice we need length(survObject$str_val) == length(par) 
+  
+  return(list(resp=c(L_name, R_name), loglike=loglike_int, par=par,
+              linear_pred=linear_pred, str_val=str_val))
 }
+
