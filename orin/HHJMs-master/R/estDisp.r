@@ -61,7 +61,8 @@ estDisp <- function(RespLog = list(Jlik1, Jlik2),
     
     # evaluate the adjusted profile h-likelihood
     fy <- sum(lhlike1)+sum(lhlike2)+sum(lhlike3)-0.5*log(det(H/2/pi))
-    # cat("fy value=", fy,'\n')
+#     cat("fy value=", fy,'\n')
+#    cat(" det(H) Illegal：", deth, "\n")
     return(-fy)
   }
   
@@ -156,14 +157,18 @@ estDisp <- function(RespLog = list(Jlik1, Jlik2),
     } else{
       Lval00 =  Lval0+rnorm(length(Lval0),0,0.01)
     }
-    str_val0 <-  unlist(c(sigma0+rnorm(length(sigma0),0,0.1), 
-                          Lval00))
+    str_val0 <-  unlist(c(sigma0+rnorm(length(sigma0),0,0.1),Lval00))
+   # If two random effect came from same model, use this too avoid gradient difference
+   # sigma_start <- unlist(sigma0)[Jdisp]
+   # str_val0 <- unlist(c(sigma_start + rnorm(length(Jdisp),0,0.1), Lval00))
+    
+    eps <- 1e-4
     
     
     result <- try(optim(par=str_val0, fn=ff, gr=gr,
                         method=method,
-                        lower=c(lower, rep(0,q0)), 
-                        upper=c(upper,rep(pi,q0)),
+                        lower = c(lower, rep(eps, q0)),
+                        upper = c(upper, rep(pi - eps, q0)),
                         control = list(
                           trace=1-check,
                           maxit=1000
