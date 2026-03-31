@@ -325,9 +325,20 @@ survObject2 <- list(
   distribution='weibull',
   str_val= -summary(fitCOX2)$coeff[-1]/summary(fitCOX2)$scale)
 
-set.seed(1)
+
 # ------------------ Cox model h-likelihood ----------------------
 tic()
+
+# joint model without LLOQ part
+set.seed(3)
+testjm_without <- try(JMfit(glmeObject, survObject1, # the glmeObject1 with CenObject=NULL
+                            long_data, surv_data_final,
+                            idVar="sid", eventTime="L",
+                            survFit=fitCOX1,
+                            method = "h-likelihood", Silent=F), silent=F)
+JMsummary(testjm_without)
+
+set.seed(1)
 testjm1 <- try(JMfit(glmeObject, survObject1, 
                      long_data, surv_data_final,
                      idVar="sid", eventTime="L",
@@ -346,13 +357,7 @@ testjm1$sigma
 
 testjm1$covBi
 
-# joint model without LLOQ part
-testjm_without <- try(JMfit(glmeObject, survObject1, # the glmeObject1 with CenObject=NULL
-                     long_data, surv_data_final,
-                     idVar="sid", eventTime="L",
-                     survFit=fitCOX1,
-                     method = "h-likelihood", Silent=F), silent=F)
-JMsummary(testjm_without)
+
 
 # ----------------Weibull H-likelihood--------------------------------
 
@@ -421,7 +426,7 @@ JMsummary(int1)
 
 
 # ----------------NLME + Right censored ---------------
-
+set.seed(12)
 long_df <- as.data.frame(dataset_new_NLME)
 long_df$Zij <- long_data$Zij
 long_df$sin_term <- long_data$sin_term

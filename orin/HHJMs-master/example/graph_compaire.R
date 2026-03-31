@@ -133,14 +133,14 @@ set.seed(20) #2
 sids_sample <- sample(unique(graph_data_N$sid), 1)   
 
 # without LLOQ section model
-# beta_vec <- c(
-#   beta0 = 0.445 ,
-#   beta1 = 0.150 ,
-#   beta2 = 3.084,
-#   beta3 = 2.903,
-#   beta4 = -1.481,
-#   beta5 = 0.301
-# )
+beta_vec <- c(
+  beta0 = 0.447 ,
+  beta1 = 0.157 ,
+  beta2 = 3.074,
+  beta3 = 2.979,
+  beta4 = -1.478,
+  beta5 = 0.062
+)
 
 # with LLOQ section model
 beta_vec <- c(
@@ -149,7 +149,7 @@ beta_vec <- c(
   beta2 = 1.428,
   beta3 = 0.617,
   beta4 = -0.813,
-  beta5 = 1.058
+  beta5 = 0.758
 )
 
 # nonlinear model function
@@ -183,14 +183,14 @@ for (sid_i in sids_sample) {
   b11_nlme <- dat_i$b11_nlme[1]
   
   coefs_sid <- c(
-    A1 = 1.495,
-    A2 = 0.746,
-    A3 = 0.794,
-    A4 = 0.185,
-    A5 = 0.211,
-    A6 = 0.067,
-    A7 = 0.003,
-    lambda = -5.514 + b11_nlme
+    A1 = 1.498,
+    A2 = 0.796,
+    A3 = 0.756,
+    A4 = 0.165,
+    A5 = 0.238,
+    A6 = 0.056,
+    A7 = 0.013,
+    lambda = -5.484 + b11_nlme
   )
   
   A_names <- paste0("A", 1:7)
@@ -435,14 +435,14 @@ for (ii in seq_along(all_sid)) {
   b11_nlme <- dat_com$b11_nlme[1]
   
   coefs_sid <- c(
-    A1 = 1.495,
-    A2 = 0.746,
-    A3 = 0.794,
-    A4 = 0.185,
-    A5 = 0.211,
-    A6 = 0.067,
-    A7 = 0.003,
-    lambda = -5.514 + b11_nlme
+    A1 = 1.498,
+    A2 = 0.796,
+    A3 = 0.756,
+    A4 = 0.165,
+    A5 = 0.238,
+    A6 = 0.056,
+    A7 = 0.013,
+    lambda = -5.484 + b11_nlme
   )
   A_vals <- as.numeric(coefs_sid[paste0("A", 1:7)])
   lambda_val <- as.numeric(coefs_sid["lambda"])
