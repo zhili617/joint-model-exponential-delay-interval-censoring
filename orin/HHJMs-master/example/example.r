@@ -122,7 +122,7 @@ survObject2 <- list(
 ######################################################
 ### case 1: with a Cox PH model ###
 tic()
-testjm3 <- try(JMfit(glmeObject, survObject1, 
+testjm1 <- try(JMfit(glmeObject, survObject1, 
                     long.data, surv.data,
                     idVar="sid", eventTime="obs_time",
                     survFit=fitCOX1,
