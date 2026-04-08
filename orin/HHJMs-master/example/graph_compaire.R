@@ -144,12 +144,12 @@ beta_vec <- c(
 
 # with LLOQ section model
 beta_vec <- c(
-  beta0 = 0.398 ,
-  beta1 = 1.925 ,
-  beta2 = 1.428,
-  beta3 = 0.617,
-  beta4 = -0.813,
-  beta5 = 0.758
+  beta0 = 0.411 ,
+  beta1 = 1.679 ,
+  beta2 = 2.276,
+  beta3 = 1.676 ,
+  beta4 =  -1.057,
+  beta5 = 0.925
 )
 
 # nonlinear model function
