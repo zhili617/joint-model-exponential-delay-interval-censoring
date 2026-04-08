@@ -212,6 +212,7 @@ write_csv(
 )
 
 
+
 #------------  Set up models--------------------
 
 
@@ -244,6 +245,12 @@ Sdata$b11 <- scale(ranef(md1)$sid[,1], center=T, scale=T)
 Sdata$b21 <- scale(ranef(md3)$sid[,1], center=T, scale=T)
 
 
+Sdata_save <- Sdata %>%
+  mutate(
+    b11 = as.numeric(b11),
+    b21 = as.numeric(b21)
+  )
+write_csv(Sdata_save, file.path(out_dir, "Sdata.csv"))
 
 #---------------------right censored survival model----------------------
 # a Cox PH model
