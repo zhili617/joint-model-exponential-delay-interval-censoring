@@ -259,7 +259,7 @@ fitCOX2 <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b11 +
 
 
 #-------------(1) Create objects for longitudinal models---------------
-LLOQ = 2
+LLOQ = 1.477
 # right censored part
 CenObject <- list(
   fm = Cij ~ t_star + sin_term + risk1 + risk2 + b11,
@@ -338,7 +338,7 @@ testjm_without <- try(JMfit(glmeObject, survObject1, # the glmeObject1 with CenO
                             method = "h-likelihood", Silent=F), silent=F)
 JMsummary(testjm_without)
 
-set.seed(1)
+set.seed(3)
 testjm1 <- try(JMfit(glmeObject, survObject1, 
                      long_data, surv_data_final,
                      idVar="sid", eventTime="L",
@@ -366,7 +366,7 @@ testjm2 <- JMfit(glmeObject, survObject2,
                      long_data, surv_data_final,
                      idVar="sid", eventTime="L",
                      survFit=fitCOX2,
-                     method = "h-likelihood", Silent = F) #itertol = 1e-2
+                     method = "h-likelihood", Silent = T) #itertol = 1e-2
  
 new_sd2 = JMsd_aGH(testjm2, ghsize=4, srcpath=srcpath, paralle=T)
 ptm <- toc()
@@ -382,7 +382,7 @@ JMsummary(testjm2, newSD=new_sd2)
 #---------------------------------------------------------------------
 
 #-----------------------interval censored survival model---------------------------------
-# for surv with R = Inf case
+
 # AFT Weibull Model
 surv_model <- survreg(
   Surv(time = L, time2 = R, type = "interval2") ~ GNE8_CD4 + risk1 + risk2 + b11 + b21,
@@ -412,8 +412,8 @@ survObject_intPH <- list( fm = Surv(L, R) ~ GNE8_CD4 + risk1 + risk2 + b11 + b21
                           distribution = "weibull_ph_interval", 
                           str_val = -summary(surv_model)$coeff[-1]/summary(surv_model)$scale) 
 
-
-int1<- JMfit(
+set.seed(3)
+K<- JMfit(
   glmeObject = glmeObject, survObject_intPH,
   long.data = long_data,
   surv.data = surv_data_final,
@@ -422,7 +422,7 @@ int1<- JMfit(
   survFit = surv_model,    
   method = "h-likelihood", Silent = F
 )
-JMsummary(int1)
+JMsummary(K)
 
 
 # ----------------NLME + Right censored ---------------
@@ -516,29 +516,4 @@ survObject_nlme <- list(
 
 
   JMsummary(H)
-  
-  
-  
-  # fitCOX2_nlme <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b_11 + b_21, data = Sdata_nlme, dist='weibull')
-  # 
-  # surv_data_final <- as.data.frame(surv_data_final)
-  # 
-  # survObject2_nlme <- list(
-  #   fm= L ~ GNE8_CD4 + risk1 + risk2 + b_11 + b_21,
-  #   event="dropped_out_right", 
-  #   par='xi',
-  #   disp=NULL,
-  #   lower=c(0, 0), upper=c(Inf, Inf),
-  #   distribution='weibull',
-  #   str_val= -summary(fitCOX2_nlme)$coeff[-1]/summary(fitCOX2_nlme)$scale)
-  # 
-  # H_weibull <- JMfit(
-  #   glmeObject = glmeObject_nlme,
-  #   survObject = survObject2_nlme,
-  #   long.data = long_df, 
-  #   surv.data = surv_data_final,
-  #   idVar="sid", 
-  #   eventTime="L",
-  #   survFit= fitCOX2_nlme,
-  #   method = "h-likelihood", Silent=F)
   
