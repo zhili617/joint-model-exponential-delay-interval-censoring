@@ -985,6 +985,16 @@ coverage_nlme <- colMeans(
 # 
 # 
 
+lambda_vec <- sapply(res_new_for_test, function(x) x$joint$estimate[8])
+lambda_se <- sapply(res_new_for_test, function(x) x$joint$fit$fixedsd[8])
 
+exp(lambda_vec)*lambda_se
+qqnorm(exp(lambda_vec)*lambda_se)
+qqline(lambda_vec)
 
+lower <- exp(lambda_vec - 1.96 * lambda_se)
+upper <- exp(lambda_vec + 1.96 * lambda_se)
 
+covered <- (exp(-5.51) >= lower) & (exp(-5.51) <= upper)
+coverage <- mean(covered, na.rm = TRUE)
+coverage <- mean(covered, na.rm = TRUE)
