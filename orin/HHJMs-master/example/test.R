@@ -28,41 +28,82 @@ dataset_new <- dataset %>%
   group_by(sid) %>%
   filter(Vxind == 1, HIVinfectionind == 0) %>%      # 2815
   filter(n() > 1) %>%                             # Keep only sids with more than 1 record     2759
-  dplyr::select(sid, sampledays, doesdays, doesnumberschedule, NAb, MNGNE8, riskscorecat, GNE8_CD4, MN_CD4) %>%
+  dplyr::select(sid, sampledays, doesdays,peakvalley, doesnumberschedule, NAb, MNGNE8, riskscorecat, GNE8_CD4, MN_CD4) %>%
   filter(!any(is.na(across(everything())))) %>%  # Remove rows with NA
   ungroup()     #2235
 
 
+# -----------------------------------
+# valley-only planned days (used to impute R)
+# doesnumberschedule 1~7 corresponds to Month 0,1,6,12,18,24,30
+# -----------------------------------
+valley_grid <- c(0, 30, 180, 360, 540, 720, 900)  # unit: days
 
+# -----------------------------------
+# population-level: mean actual visit day per doesnumberschedule (valley only)
+# -----------------------------------
+dose_avg_days <- dataset_new %>%
+  filter(peakvalley == 0) %>%
+  group_by(doesnumberschedule) %>%
+  summarise(avg_sampleday = mean(sampledays, na.rm = TRUE), .groups = "drop")
 
-# find average interval of sampledays for each sample sid
-avg_interval_df <- dataset_new %>%  
+# -----------------------------------
+# subject-level: systematic visit bias
+# (individual actual day - population mean for that dose)
+# -----------------------------------
+individual_bias <- dataset_new %>%
+  filter(peakvalley == 0) %>%
+  left_join(dose_avg_days, by = "doesnumberschedule") %>%
+  group_by(sid) %>%
+  summarise(
+    visit_bias = mean(sampledays - avg_sampleday, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# -----------------------------------
+# dropout flag + L
+# dropout defined as: did not complete all 7 scheduled valley visits
+# L = last observed visit day (peak or valley)
+# -----------------------------------
+avg_interval_df <- dataset_new %>%
   group_by(sid) %>%
   arrange(sampledays) %>%
   summarise(
     n = n(),
     last_sampleday = max(sampledays, na.rm = TRUE),
-    avg_interval = round(mean(diff(sampledays), na.rm = TRUE)))
-
-
-# take 90% of the max sampledays as cutoff day and 80% of the itnerval day as average interval day
-cutoff_day <- round(quantile(avg_interval_df$last_sampleday, probs = 0.9))  
-average_interval <- round(quantile(avg_interval_df$avg_interval, probs = 0.9))
-
-set.seed(3)
-# dropped_out_interval as interval censored result
-# dropped_out_right as right censored result
-surv_data <- avg_interval_df %>%
-  mutate(
-    dropout_L = last_sampleday,
-    interval_i = sample(avg_interval_df$avg_interval, size = n(), replace = TRUE),  # empirical distribution of interval
-    dropout_R = last_sampleday + interval_i, #if_else(last_sampleday > cutoff_day,
-                       # Inf, 
-                       # last_sampleday + interval_i),
-    dropped_out_interval = ifelse( dropout_R <= cutoff_day, 1, 0),
-    dropped_out_right = ifelse( last_sampleday <= cutoff_day, 1, 0)
+    avg_interval = round(mean(diff(sampledays), na.rm = TRUE)),
+    max_dose_valley = max(doesnumberschedule[peakvalley == 0], na.rm = TRUE),
+    .groups = "drop"
   )
 
+cutoff_day <- round(quantile(avg_interval_df$last_sampleday, probs = 0.4))  
+# -----------------------------------
+# construct survival data
+# -----------------------------------
+surv_data <- avg_interval_df %>%
+  left_join(individual_bias, by = "sid") %>%
+  mutate(
+    dropout_L = last_sampleday,
+    next_dose = max_dose_valley + 1,
+    R_base = case_when(
+      next_dose <= 7 ~ dose_avg_days$avg_sampleday[next_dose],
+      TRUE ~ Inf
+    ),
+    dropout_R = ifelse(is.finite(R_base), R_base + visit_bias, Inf),
+    dropout_R = pmax(dropout_R, dropout_L + 1),
+    dropout_R = ifelse(is.finite(R_base), ceiling(dropout_R), Inf),
+    
+    dropped_out_right    = ifelse(last_sampleday <= cutoff_day, 1, 0),
+    dropped_out_interval = dropped_out_right,
+    
+    # for people who complete the survey but event=1（R=Inf）use individual average time
+    dropout_R = case_when(
+      dropped_out_right == 1 & is.finite(dropout_R)  ~ dropout_R,
+      dropped_out_right == 1 & !is.finite(dropout_R) ~ as.numeric(last_sampleday +
+                                                                    avg_interval),
+      TRUE ~ Inf
+    )
+  )
 
 #----------------------------------------------------------------------------------------------------
 
@@ -73,7 +114,7 @@ surv_data <- avg_interval_df %>%
 vaccine_time_map <- c(0, 1, 6, 12, 18, 24, 30)
 
 vac_schedule <- data.frame(
-  dosenumberschedule = 1:7,
+  doesnumberschedule = 1:7,
   vac_month = vaccine_time_map
 )
 
@@ -111,24 +152,24 @@ get_deltas <- function(df) {
           delta_ij = end - start
         )
     }}
-    
-    # for sample month that larger than the last dose month, we decide 
-    # the time between the final vaccination and the final measurement time as delta
-    sel <- df$sample_month >= last_vac_time
-    if (any(sel)) {
-      temp <- df[sel, ]
-      valid_delta_list[[length(valid_delta_list) + 1]] <- 
-        data.frame(
-          sid = temp$sid,
-          start_doesnumber = length(vac_times),  # the 7th dose number
-          end_doesnumber = 8,                   # no more dose
-          sampledays = temp$sampledays,
-          delta_ij = (temp$sampledays - (last_vac_time * 30))/30 
-        )
-    }
-    
-    do.call(rbind, valid_delta_list)
+  
+  # for sample month that larger than the last dose month, we decide 
+  # the time between the final vaccination and the final measurement time as delta
+  sel <- df$sample_month >= last_vac_time
+  if (any(sel)) {
+    temp <- df[sel, ]
+    valid_delta_list[[length(valid_delta_list) + 1]] <- 
+      data.frame(
+        sid = temp$sid,
+        start_doesnumber = length(vac_times),  # the 7th dose number
+        end_doesnumber = 8,                   # no more dose
+        sampledays = temp$sampledays,
+        delta_ij = (temp$sampledays - (last_vac_time * 30))/30 
+      )
   }
+  
+  do.call(rbind, valid_delta_list)
+}
 
 
 # step 3 : run function 
@@ -180,13 +221,11 @@ surv_data_final <- surv_data %>%
   ) %>%
   left_join(baseline_vars, by = "sid")
 
-# set a relatively large number for R = inf
-# R_f <- surv_data_final$R[is.finite(surv_data_final$R)]
-# R_big <- max(R_f, na.rm=TRUE) + 6
-# surv_data_final$R[is.infinite(surv_data_final$R)] <- R_big
+
 
 # step 7: crete Cij and Zij value
-threshold_nab <- quantile(long_data$NAb, 0.27, na.rm = TRUE)  # set up the censored value
+quantile(long_data$NAb, 0.27, na.rm = TRUE)
+threshold_nab <- min(long_data$NAb)
 long_data <- long_data %>%
   mutate(
     Cij = as.numeric(NAb <= threshold_nab)
@@ -195,30 +234,15 @@ long_data <- long_data %>%
 long_data <- long_data %>% # define Zij based on paper
   mutate(Zij = as.integer(MNGNE8 > 0.57))
 
-#----------------------
-# ---- save result ----
-#----------------------
-
-out_dir <- "E:/UBC/Final Project/New folder/Final-Project/orin/HHJMs-master/example"
-
-write_csv(
-  long_data,
-  file.path(out_dir, paste0("long_data", ".csv"))
-)
-
-write_csv(
-  surv_data_final,
-  file.path(out_dir, paste0("surv_data", ".csv"))
-)
 
 
 
 #------------  Set up models--------------------
 
 
-# (1) LME model 1
+# (1) LME model 
 md1 <- lmer(
-  NAb ~ 1 + t_star + sin_term + risk1 + risk2 + (1 | sid),
+  NAb ~  1 + t_star + sin_term + risk1 + risk2 + (1 | sid),
   data =long_data 
 )
 
@@ -237,27 +261,24 @@ md2 <- glm(fm2, data = mydat, family = binomial())
 
 # (3) GLME model for Cij
 
-fm3 <-  Zij ~ 1 + t + sin_term + t_dij_star + b11 + ( t - 1 | sid)
+fm3 <-  Zij ~ 1 + t  + sin_term + t_dij_star + b11 + ( t - 1 | sid)
 md3 <- glmer(fm3, data = mydat, family = binomial())
-summary(md3)
+
 Sdata <- surv_data_final
 Sdata$b11 <- scale(ranef(md1)$sid[,1], center=T, scale=T)
 Sdata$b21 <- scale(ranef(md3)$sid[,1], center=T, scale=T)
 
 
-Sdata_save <- Sdata %>%
-  mutate(
-    b11 = as.numeric(b11),
-    b21 = as.numeric(b21)
-  )
-write_csv(Sdata_save, file.path(out_dir, "Sdata.csv"))
+
 
 #---------------------right censored survival model----------------------
+
+
 # a Cox PH model
 fitCOX1 <- coxph(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b11 + b21, data = Sdata)   
 
 # a Weibull model
-fitCOX2 <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b11 + b21, data = Sdata, dist='weibull')
+fitCOX2 <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4  + risk1 + risk2 + b11 + b21, data = Sdata, dist='weibull')
 
 
 ############################################
@@ -266,10 +287,10 @@ fitCOX2 <- survreg(Surv(L, dropped_out_right) ~ GNE8_CD4 + risk1 + risk2 + b11 +
 
 
 #-------------(1) Create objects for longitudinal models---------------
-LLOQ = 1.477
+LLOQ = threshold_nab
 # right censored part
 CenObject <- list(
-  fm = Cij ~ t_star + sin_term + risk1 + risk2 + b11,
+  fm = Cij ~ 1 + t_star  + sin_term + risk1 + risk2 + b11,
   family='binomial', par='eta', ran.par="b11",
   disp="eta5",
   lower = -Inf,
@@ -282,7 +303,7 @@ CenObject <- list(
 
 # continuous data
 glmeObject1 <- list(
-  fm = NAb ~ t_star + sin_term + risk1 + risk2 + b11,
+  fm = NAb ~ 1 + t_star  + sin_term + risk1 + risk2 + b11,
   family='normal', par="beta", ran.par='b11', sigma='sigma',
   disp='beta5',
   lower = 0,
@@ -328,7 +349,7 @@ survObject2 <- list(
   event="dropped_out_right", 
   par='lambda',
   disp=NULL,
-  lower=c(0, 0), upper=c(Inf, Inf),
+  lower=NULL, upper=NULL,
   distribution='weibull',
   str_val= -summary(fitCOX2)$coeff[-1]/summary(fitCOX2)$scale)
 
@@ -342,19 +363,21 @@ testjm_without <- try(JMfit(glmeObject, survObject1, # the glmeObject1 with CenO
                             long_data, surv_data_final,
                             idVar="sid", eventTime="L",
                             survFit=fitCOX1,
-                            method = "h-likelihood", Silent=F), silent=F)
+                            method = "h-likelihood", Silent=T), silent=F)
 JMsummary(testjm_without)
+new_sd1 = JMsd_aGH(testjm_without, ghsize=4, srcpath=srcpath, paralle=T)
+JMsummary(testjm_without, new_sd1$sd_naive)
 
 set.seed(3)
-testjm1 <- try(JMfit(glmeObject, survObject1, 
-                     long_data, surv_data_final,
-                     idVar="sid", eventTime="L",
-                     survFit=fitCOX1,
-                     method = "h-likelihood", Silent=F), silent=F) 
+testjm12  <- try(JMfit(glmeObject, survObject1, 
+                      long_data, surv_data_final,
+                      idVar="sid", eventTime="L",
+                      survFit=fitCOX1,
+                      method = "h-likelihood", Silent=T), silent=F) 
 
-new_sd1 = JMsd_aGH(testjm1, ghsize=4, srcpath=srcpath, paralle=T)
-ptm <- toc()
-(ptm$toc-ptm$tic)/60   # takes 3.33 min
+
+testjm1$RespLog
+
 # return coefficient table of Fixed effects 
 JMsummary(testjm1)
 JMsummary(testjm1, newSD=new_sd1)
@@ -369,12 +392,13 @@ testjm1$covBi
 # ----------------Weibull H-likelihood--------------------------------
 
 tic()
-testjm2 <- JMfit(glmeObject, survObject2, 
-                     long_data, surv_data_final,
-                     idVar="sid", eventTime="L",
-                     survFit=fitCOX2,
-                     method = "h-likelihood", Silent = T) #itertol = 1e-2
- 
+set.seed(1)
+testjm2  <- JMfit(glmeObject, survObject2, 
+                  long_data, surv_data_final,
+                  idVar="sid", eventTime="L",
+                  survFit=fitCOX2,
+                  method = "h-likelihood", Silent = T) #itertol = 2e-2
+
 new_sd2 = JMsd_aGH(testjm2, ghsize=4, srcpath=srcpath, paralle=T)
 ptm <- toc()
 (ptm$toc-ptm$tic)/60   # takes 3.33 min
@@ -406,12 +430,17 @@ surv_model_ph <- flexsurvreg(
 )
 
 
+# set a relatively large number for R = inf
+R_f <- surv_data_final$R[is.finite(surv_data_final$R)]
+R_big <- max(R_f, na.rm=TRUE) + 6
+surv_data_final$R[is.infinite(surv_data_final$R)] <- R_big
+
 
 #-------------(1) Create objects for survival models---------------
 
 
 survObject_intPH <- list( fm = Surv(L, R) ~ GNE8_CD4 + risk1 + risk2 + b11 + b21, 
-                          event = NULL, # only interval-censored don't have event
+                          event = "dropped_out_interval", 
                           par = "lambda", # betas: lambda0, lambda1, ... 
                           disp = NULL, 
                           lower=c(0, 0), 
@@ -419,21 +448,20 @@ survObject_intPH <- list( fm = Surv(L, R) ~ GNE8_CD4 + risk1 + risk2 + b11 + b21
                           distribution = "weibull_ph_interval", 
                           str_val = -summary(surv_model)$coeff[-1]/summary(surv_model)$scale) 
 
-set.seed(3)
-K<- JMfit(
+set.seed(2)
+K1<- JMfit(
   glmeObject = glmeObject, survObject_intPH,
   long.data = long_data,
   surv.data = surv_data_final,
   idVar = "sid",
   eventTime = NULL,      # no need
   survFit = surv_model,    
-  method = "h-likelihood", Silent = F
+  method = "h-likelihood", Silent = T
 )
-JMsummary(K)
+JMsummary(K1)
 
 
 # ----------------NLME + Right censored ---------------
-set.seed(12)
 long_df <- as.data.frame(dataset_new_NLME)
 long_df$Zij <- long_data$Zij
 long_df$sin_term <- long_data$sin_term
@@ -456,7 +484,7 @@ md3_same <- glmer(fm3_same, data = mydat_nlme, family = binomial())
 Sdata_nlme <- Sdata
 Sdata_nlme$b_11 <- scale(ranef(fit_nlme)[, "lambda"], center = TRUE, scale = TRUE)
 # Sdata_nlme$b_21 <- scale(ranef(fit_nlme)[, "A2"], center = TRUE, scale = TRUE)
- Sdata_nlme$b_21 <- scale(ranef(md3_same)$sid[,1], center=T, scale=T)
+Sdata_nlme$b_21 <- scale(ranef(md3_same)$sid[,1], center=T, scale=T)
 
 
 
@@ -469,19 +497,25 @@ nlmeObject <- list(
   family = "EXP_Delay",
   fm = nl_formula,
   sigma = "sigma",
-  disp = "b_11",
+  disp = "sigma_b11",                          # dispersion of standardised b_11
+  lower = 0,                                   # sigma_b11 >= 0
+  upper = Inf,
   A_names = paste0("A",1:7),
   ind_names = paste0("ind_k",1:7),
   lag_names = paste0("lag_k",1:7),
   lambda_name = "lambda",
   ran_map = list(
-    lambda = "b_11" #, A2 = "b21"
+    lambda = "b_11"
   ),
-  str_val = c(as.list(fixef(fit_nlme)),  sd(ranef(fit_nlme)[["lambda"]])),      # A1..A7 + lambda
+  re_disp = list(
+    b_11 = "sigma_b11"                         # lambda_i = exp(lambda + sigma_b11 * b_11)
+  ),
+  str_val = c(as.list(fixef(fit_nlme)),
+              sd(ranef(fit_nlme)[["lambda"]]),  # sigma_b11 starting value (~0.0038)
+              fit_nlme$sigma),                  # sigma (NAb measurement error) starting value
   CenObject = NULL
 )
 
-nlmeObject$str_val[[9]] <- log(nlmeObject$str_val$lambda/sd(ranef(fit_nlme)[["lambda"]]))
 
 nlmeObject$str_val$lambda <- log(nlmeObject$str_val$lambda)
 
@@ -498,6 +532,7 @@ glmeObject2_nlme <- list(
   str_val=c(fixef(md3_same),  sd(ranef(md3_same)$sid[,1])),
   CenObject=NULL)
 
+
 glmeObject_nlme <- list(nlmeObject, glmeObject2_nlme)
 
 
@@ -510,8 +545,8 @@ survObject_nlme <- list(
   distribution=NULL,
   str_val= summary(fitCOX1_nlme)$coeff[,1])
 
-
- H <- JMfit(
+set.seed(2)
+H <- JMfit(
   glmeObject = glmeObject_nlme,
   survObject = survObject_nlme,
   long.data = long_df, 
@@ -522,5 +557,6 @@ survObject_nlme <- list(
   method = "h-likelihood", Silent=T)
 
 
-  JMsummary(H)
-  
+JMsummary(H)
+new_sd2 = JMsd_aGH(H, ghsize=4, srcpath=srcpath, paralle=T)
+JMsummary(H, new_sd2$sd_robust)
