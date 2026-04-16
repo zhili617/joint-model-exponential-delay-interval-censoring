@@ -14,6 +14,11 @@ re_df <- data.frame(
   b21 = testjm1$Bi[, 2]
 )
 
+# re_df <- data.frame(
+#   sid = as.character(testjm_without$uniqueID),
+#   b11 = testjm_without$Bi[, 1],
+#   b21 = testjm_without$Bi[, 2]
+# )
 graph_data_T <- graph_data %>%
   left_join(
     re_df %>% dplyr::select(sid, b11),
@@ -132,25 +137,25 @@ get_delta_grid <- function(tgrid, vac_times = vaccine_time_map) {
 set.seed(20) #2
 sids_sample <- sample(unique(graph_data_N$sid), 1)   
 
-# without LLOQ section model
-beta_vec <- c(
-  beta0 = 0.447 ,
-  beta1 = 0.157 ,
-  beta2 = 3.074,
-  beta3 = 2.979,
-  beta4 = -1.478,
-  beta5 = 0.062
-)
+# # without LLOQ section model
+# beta_vec <- c(
+#   beta0 = as.numeric(testjm_without$fixedest["beta0"]),
+#   beta1 = as.numeric(testjm_without$fixedest["beta1"]) ,
+#   beta2 = as.numeric(testjm_without$fixedest["beta2"]),
+#   beta3 = as.numeric(testjm_without$fixedest["beta3"]),
+#   beta4 = as.numeric(testjm_without$fixedest["beta4"]),
+#   unlist(testjm_without$sigma)["beta5"]
+# )
 
-# with LLOQ section model
-beta_vec <- c(
-  beta0 = 0.411 ,
-  beta1 = 1.679 ,
-  beta2 = 2.276,
-  beta3 = 1.676 ,
-  beta4 =  -1.057,
-  beta5 = 0.925
-)
+# # with LLOQ section model
+# beta_vec <- c(
+#   beta0 = as.numeric(testjm1$fixedest["beta0"]),
+#   beta1 = as.numeric(testjm1$fixedest["beta1"]) ,
+#   beta2 = as.numeric(testjm1$fixedest["beta2"]),
+#   beta3 = as.numeric(testjm1$fixedest["beta3"]),
+#   beta4 = as.numeric(testjm1$fixedest["beta4"]),
+#    unlist(testjm1$sigma)["beta5"]
+# )
 
 # nonlinear model function
 f_model1 <- function(t, A, lambda, plan_months = c(0,1,6,12,18,24,30)) {
@@ -181,16 +186,21 @@ for (sid_i in sids_sample) {
   ## ======================================================
   
   b11_nlme <- dat_i$b11_nlme[1]
-  
+
+  # Get lambda and c_b11 from converged model
+  # lambda is in fixedest (log-scale decay rate)
+  # c_b11 is in sigma (dispersion) if nlmeObject$disp = "c_b11"
+  lambda_fixed <- H$fixedest["lambda"]
+
   coefs_sid <- c(
-    A1 = 1.498,
-    A2 = 0.796,
-    A3 = 0.756,
-    A4 = 0.165,
-    A5 = 0.238,
-    A6 = 0.056,
-    A7 = 0.013,
-    lambda = -5.484 + b11_nlme
+    A1 = as.numeric(H$fixedest["A1"]),
+    A2 = as.numeric(H$fixedest["A2"]),
+    A3 = as.numeric(H$fixedest["A3"]),
+    A4 = as.numeric(H$fixedest["A4"]),
+    A5 = as.numeric(H$fixedest["A5"]),
+    A6 = as.numeric(H$fixedest["A6"]),
+    A7 = as.numeric(H$fixedest["A7"]),
+    lambda = as.numeric(lambda_fixed) +  b11_nlme
   )
   
   A_names <- paste0("A", 1:7)
@@ -304,114 +314,9 @@ for (sid_i in sids_sample) {
   print(check_compare_new)
 }
 
-# ------------------------------------------------------------
-# ------------------------- AUC ------------------------------ 
-# ------------------------------------------------------------
-
-# Only COX model
-lp<- predict(fitCOX1, type = "lp")
-
-auc_res <- survivalROC(
-  Stime = surv_data_final$L,
-  status = surv_data_final$dropped_out_right,
-  marker = lp,
-  predict.time = 12,
-  method = "KM"
-)
-
-auc_res$AUC
-
-plot(
-  auc_res$FP,
-  auc_res$TP,
-  type = "l",
-  xlab = "False Positive Rate",
-  ylab = "True Positive Rate",
-  main = paste("AUC =", round(auc_res$AUC, 3))
-)
-abline(0, 1, lty = 2)
-
-
-# joint model
-# ----------------------------------------------------------------
-# -----------------------------NLME-------------------------------
-# ----------------------------------------------------------------
-
-tabH <- JMsummary(H)
-
-xi_hat <- tabH[grep("^xi", rownames(tabH)), "Estimate"]
-
-## 2 subject-level data
-Sdata_nlme_new <- Sdata_nlme %>% mutate(sid = as.character(Sdata_nlme$sid))
 
 
 
-
-auc_dat <- Sdata_nlme_new %>%
-  dplyr::select(
-    sid,
-    L,
-    dropped_out_right,
-    GNE8_CD4,
-    risk1,
-    risk2
-  ) %>%
-  left_join(
-    re_H %>% dplyr::select(sid, b11_nlme, b21_nlme),
-    by = "sid"
-  )
-
-## 3 joint model risk score
-X <- as.matrix(
-  auc_dat[,c("GNE8_CD4","risk1","risk2","b11_nlme","b21_nlme")]
-)
-
-auc_dat$joint_lp <- as.numeric(X %*% xi_hat)
-
-## 4 AUC
-roc_obj <- roc(
-  response = auc_dat$dropped_out_right,
-  predictor = auc_dat$joint_lp
-)
-
-auc(roc_obj)
-plot(roc_obj)
-
-# ----------------------------------------------------------------
-
-
-
-
-# ----------------------------------------------------------------
-# ------------------------------- LME ----------------------------
-# ----------------------------------------------------------------
-
-tabH <- JMsummary(testjm1)
-
-lambda_hat <- tabH[grep("^lambda", rownames(tabH)), "Estimate"]
-
-
-auc_dat_1 <- auc_dat %>%
-  left_join(
-    re_df %>% dplyr::select(sid, b11, b21),
-    by = "sid"
-  )
-  
-## 3 joint model risk score
-X <- as.matrix(
-  auc_dat_1[,c("GNE8_CD4","risk1","risk2","b11","b21")]
-)
-
-auc_dat_1$joint_lp <- as.numeric(X %*% lambda_hat)
-
-## 4 AUC
-roc_obj <- roc(
-  response = auc_dat_1$dropped_out_right,
-  predictor = auc_dat_1$joint_lp
-)
-
-auc(roc_obj)
-plot(roc_obj)
 # ----------------------------------------------------------------
 
 
@@ -434,15 +339,17 @@ for (ii in seq_along(all_sid)) {
   ## ===== NLME fitted points =====
   b11_nlme <- dat_com$b11_nlme[1]
   
+   lambda_fixed <- H$fixedest["lambda"]
+
   coefs_sid <- c(
-    A1 = 1.498,
-    A2 = 0.796,
-    A3 = 0.756,
-    A4 = 0.165,
-    A5 = 0.238,
-    A6 = 0.056,
-    A7 = 0.013,
-    lambda = -5.484 + b11_nlme
+    A1 = as.numeric(H$fixedest["A1"]),
+    A2 = as.numeric(H$fixedest["A2"]),
+    A3 = as.numeric(H$fixedest["A3"]),
+    A4 = as.numeric(H$fixedest["A4"]),
+    A5 = as.numeric(H$fixedest["A5"]),
+    A6 = as.numeric(H$fixedest["A6"]),
+    A7 = as.numeric(H$fixedest["A7"]),
+    lambda = as.numeric(lambda_fixed) +  b11_nlme
   )
   A_vals <- as.numeric(coefs_sid[paste0("A", 1:7)])
   lambda_val <- as.numeric(coefs_sid["lambda"])
