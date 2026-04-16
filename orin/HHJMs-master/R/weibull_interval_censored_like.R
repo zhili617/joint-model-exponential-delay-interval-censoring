@@ -58,9 +58,9 @@ weibull_ph_interval_loglike <- function(survObject, weibPar){
   loglike_right <- logSL
   
   # The case with both interval-censored and right-censored
-   # loglike <- paste0(
-     # "(", event, ")*(", loglike_int, ") + ",
-     # "(1-(", event, "))*(", loglike_right, ")")
+    loglike <- paste0(
+      "(", event, ")*(", loglike_int, ") + ",
+      "(1-(", event, "))*(", loglike_right, ")")
   
   
   # parameters
@@ -68,7 +68,7 @@ weibull_ph_interval_loglike <- function(survObject, weibPar){
   par <- c(par, Wlogscale, Wshape)
   names(str_val) <- par #Notice we need length(survObject$str_val) == length(par) 
   
-  return(list(resp=c(L_name, R_name), loglike=loglike_int, par=par,
+  return(list(resp=c(L_name, R_name), loglike=loglike, par=par,
               linear_pred=linear_pred, str_val=str_val))
 }
 
